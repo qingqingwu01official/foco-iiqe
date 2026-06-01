@@ -1,0 +1,25 @@
+# dependencies
+node_modules
+
+# build
+dist
+
+# Vercel
+.vercel
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# logs / cache
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.vite
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode

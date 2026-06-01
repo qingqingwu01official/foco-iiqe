@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "foco-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["vite", "--port", "5177"],
+      "port": 5177
+    }
+  ]
+}
