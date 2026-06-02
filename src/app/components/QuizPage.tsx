@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router';
 import { ChevronLeft } from 'lucide-react';
 import useEmblaCarousel from 'embla-carousel-react';
@@ -16,15 +16,220 @@ import { QUESTIONS, QUESTIONS_BY_CHAPTER, type QuizQuestion } from '../data/quiz
 import { buildErrorReviewQuizTarget } from '../utils/errorBookFocus';
 import {
   archiveErrorBookItem,
+  filterQuizQuestionsForErrorBookList,
   getErrorBookItemState,
   recordErrorBookAnswer,
+  type ErrorBookListFilter,
   type ErrorBookMode,
 } from '../lib/errorBookArchive';
 
 const DEFAULT_BOTTOM_BAR_H = 100;
+const QUIZ_PROGRESS_STORAGE_KEY = 'iiqe-quiz-progress-v1';
 
 export type { QuizQuestion };
 export { QUESTIONS };
+
+const MASTERY_CARD_RADIUS = 14;
+const MASTERY_CARD_BG = '#F5F8FA';
+const MASTERY_CARD_BORDER = '1px solid rgba(0,52,89,0.08)';
+const MASTERY_TITLE_COLOR = '#003459';
+
+const QUIZ_DIALOG_SIDE_PADDING = 16;
+
+/** 居中对话框：相对刷题页根容器 absolute，避免 fixed 相对视口宽于 393px 壳层而溢出 */
+function QuizCenterDialog({
+  zIndexBackdrop,
+  zIndexPanel,
+  onBackdropClick,
+  children,
+}: {
+  zIndexBackdrop: number;
+  zIndexPanel: number;
+  onBackdropClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <div
+        onClick={onBackdropClick}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0,0,0,0.28)',
+          zIndex: zIndexBackdrop,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: `max(24px, env(safe-area-inset-top)) ${QUIZ_DIALOG_SIDE_PADDING}px max(24px, env(safe-area-inset-bottom))`,
+          boxSizing: 'border-box',
+          zIndex: zIndexPanel,
+          pointerEvents: 'none',
+        }}
+      >
+        <div
+          style={{
+            width: '100%',
+            maxWidth: '100%',
+            minWidth: 0,
+            boxSizing: 'border-box',
+            borderRadius: 18,
+            background: '#fff',
+            padding: 16,
+            boxShadow: '0 14px 34px rgba(0,0,0,0.16)',
+            maxHeight: '100%',
+            overflowY: 'auto',
+            pointerEvents: 'auto',
+          }}
+        >
+          {children}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function CenterStatusToast({ message }: { message: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding:
+          'max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom))',
+        boxSizing: 'border-box',
+        zIndex: 74,
+        pointerEvents: 'none',
+      }}
+    >
+      <div
+        style={{
+          padding: '12px 14px',
+          borderRadius: 14,
+          background: 'rgba(0,52,89,0.92)',
+          color: '#fff',
+          fontSize: 13,
+          fontWeight: 700,
+          boxShadow: '0 10px 26px rgba(0,52,89,0.22)',
+          maxWidth: 320,
+          textAlign: 'center',
+        }}
+      >
+        {message}
+      </div>
+    </div>
+  );
+}
+
+/** 与掌握进度块共用中间描边，下段独立圆底（14px，与上框一致）— 可归档 */
+function ArchiveToMasteredFooterBar({
+  pending,
+  onClick,
+  connectBelow = false,
+}: {
+  pending: boolean;
+  onClick: () => void;
+  /** 下方还有反复错条时去掉本条底圆角 */
+  connectBelow?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={onClick}
+      aria-label={pending ? '归档中' : '点击可归档至已掌握'}
+      style={{
+        position: 'relative',
+        zIndex: 1,
+        marginTop: -MASTERY_CARD_RADIUS,
+        width: '100%',
+        height: 44,
+        padding: 0,
+        border: 'none',
+        cursor: pending ? 'wait' : 'pointer',
+        opacity: pending ? 0.65 : 1,
+        background:
+          'linear-gradient(180deg, rgba(232,255,240,0.98) 0%, rgba(214,245,228,0.98) 100%)',
+        borderRadius: connectBelow
+          ? 0
+          : `0 0 ${MASTERY_CARD_RADIUS}px ${MASTERY_CARD_RADIUS}px`,
+      }}
+    >
+      <span
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginTop: MASTERY_CARD_RADIUS,
+          height: `calc(100% - ${MASTERY_CARD_RADIUS}px)`,
+          padding: '0 14px',
+          width: '100%',
+          boxSizing: 'border-box',
+          fontSize: 12,
+          lineHeight: 1.2,
+          fontWeight: 600,
+          color: '#15803D',
+          letterSpacing: '0.01em',
+          textAlign: 'center',
+        }}
+      >
+        {pending ? '归档中...' : '点击可归档至已掌握'}
+      </span>
+    </button>
+  );
+}
+
+/** 与掌握进度块共用中间描边，下段独立圆底（14px，与上框一致） */
+function RepeatedWrongFooterBar() {
+  return (
+    <div
+      role="note"
+      style={{
+        position: 'relative',
+        zIndex: 1,
+        marginTop: -MASTERY_CARD_RADIUS,
+        height: 44,
+        background: 'linear-gradient(180deg, rgba(255,235,232,0.98) 0%, rgba(255,220,214,0.98) 100%)',
+        border: 'none',
+        borderRadius: `0 0 ${MASTERY_CARD_RADIUS}px ${MASTERY_CARD_RADIUS}px`,
+      }}
+    >
+      {/* 上方会被掌握进度圆底覆盖 14px，这里对“可见区域”做垂直居中 */}
+      <div
+        style={{
+          marginTop: MASTERY_CARD_RADIUS,
+          height: `calc(100% - ${MASTERY_CARD_RADIUS}px)`,
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 14px',
+        }}
+      >
+        <p
+          style={{
+            margin: 0,
+            fontSize: 12,
+            lineHeight: 1.2,
+            fontWeight: 600,
+            color: '#B82E18',
+            letterSpacing: '0.01em',
+          }}
+        >
+          反复错，建议深入看解析/找老师答疑
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function MasteryDots({
   progress,
@@ -90,9 +295,32 @@ export default function QuizPage({
   const mode = (location.state as any)?.mode || 'basic';
   const subject = (location.state as any)?.subject || '卷一 · 一般保险';
   const startIndex = (location.state as any)?.questionIndex ?? 0;
-  const fromErrors = (location.state as any)?.fromErrors ?? false;
+  const fromErrors =
+    (location.state as any)?.fromErrors ?? ((location.state as any)?.returnPath === '/errors' ? true : false);
+  const returnPath = (location.state as any)?.returnPath as string | undefined;
+  const errorBookReturnState = (location.state as { returnState?: Record<string, unknown> } | undefined)
+    ?.returnState;
+  const errorBookListFilterRaw =
+    (location.state as { errorBookListFilter?: ErrorBookListFilter } | undefined)?.errorBookListFilter ??
+    (errorBookReturnState?.bucketFilter as ErrorBookListFilter | undefined);
+  const errorBookListFilter: ErrorBookListFilter | undefined =
+    errorBookListFilterRaw === 'mastered' || errorBookListFilterRaw === 'pending'
+      ? errorBookListFilterRaw
+      : undefined;
+  const errorBookMode: ErrorBookMode = mode === 'sprint' ? 'sprint' : 'basic';
+  const errorBookSectionId = fromErrors ? id ?? '' : '';
+  const errorBookEnabled = fromErrors && errorBookSectionId.length > 0;
 
-  const questions = questionsProp ?? (id && QUESTIONS_BY_CHAPTER[id]) ?? QUESTIONS;
+  const sourceQuestions = questionsProp ?? (id && QUESTIONS_BY_CHAPTER[id]) ?? QUESTIONS;
+  const questions = useMemo(() => {
+    if (!errorBookEnabled || !errorBookListFilter) return sourceQuestions;
+    return filterQuizQuestionsForErrorBookList({
+      mode: errorBookMode,
+      sectionId: errorBookSectionId,
+      questions: sourceQuestions,
+      listFilter: errorBookListFilter,
+    });
+  }, [sourceQuestions, errorBookEnabled, errorBookListFilter, errorBookMode, errorBookSectionId]);
 
   const CHAPTER_NAMES: Record<string, string> = {
     '1': '第一章 · 风险与保险基础',
@@ -106,6 +334,7 @@ export default function QuizPage({
   const chapterName = id ? (CHAPTER_NAMES[id] ?? `第 ${id} 章`) : null;
   const sectionName = (location.state as any)?.sectionName as string | undefined;
   const libraryName = (location.state as any)?.libraryName as string | undefined;
+  const resumeProgressKey = `${mode}:${fromErrors ? 'errors' : 'normal'}:${errorBookListFilter ?? 'all'}:${id ?? ''}:${sectionName ?? ''}:${libraryName ?? ''}`;
 
   const SECTION_CHAPTER_LABEL: Record<string, string> = {
     '第1章 风险的概念': '第一章 · 风险与保险基础',
@@ -149,11 +378,15 @@ export default function QuizPage({
     : '章节练习';
 
   const [qIndex, setQIndex] = useState(startIndex);
+  const [resumePromptOpen, setResumePromptOpen] = useState(false);
+  const [resumeDetectedIndex, setResumeDetectedIndex] = useState<number>(0);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [revealedAnalysis, setRevealedAnalysis] = useState<Record<number, boolean>>({});
   const [autoJumpingToAnalysis, setAutoJumpingToAnalysis] = useState(false);
   const wrongJumpTimerRef = useRef<number | null>(null);
   const pendingWrongQuestionRef = useRef<number | null>(null);
+  const reviveExitTimerRef = useRef<number | null>(null);
 
   const [notUnderstandOpen, setNotUnderstandOpen] = useState(false);
   const [flowBusy, setFlowBusy] = useState(false);
@@ -162,9 +395,12 @@ export default function QuizPage({
   const [quizNoteTargetIndex, setQuizNoteTargetIndex] = useState(0);
   const [noteSavedToast, setNoteSavedToast] = useState(false);
   const [errorBookToast, setErrorBookToast] = useState<string | null>(null);
+  const [centerStatusToast, setCenterStatusToast] = useState<string | null>(null);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [archivePending, setArchivePending] = useState(false);
   const [archiveTargetQuestionId, setArchiveTargetQuestionId] = useState<number | null>(null);
+  const [archiveToastOpen, setArchiveToastOpen] = useState(false);
+  const [archiveToastNextIndex, setArchiveToastNextIndex] = useState<number | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
   const mainAreaRef = useRef<HTMLDivElement | null>(null);
   const pageRootRef = useRef<HTMLDivElement | null>(null);
@@ -176,6 +412,68 @@ export default function QuizPage({
     dragFree: false,
     startIndex,
   });
+
+  const initialStoredProgress = useMemo(() => {
+    if (typeof window === 'undefined') return 0;
+    try {
+      const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
+      if (!raw) return 0;
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      const value = parsed?.[resumeProgressKey];
+      return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+    } catch {
+      return 0;
+    }
+  }, [resumeProgressKey]);
+
+  const resumePromptCheckedRef = useRef(false);
+  const skipResumePrompt =
+    startIndex !== 0 ||
+    initialStoredProgress <= 0 ||
+    initialStoredProgress >= questions.length;
+  const [canPersistProgress, setCanPersistProgress] = useState(skipResumePrompt);
+
+  const readStoredProgressIndex = useCallback((): number => {
+    if (typeof window === 'undefined') return 0;
+    try {
+      const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
+      if (!raw) return 0;
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      const value = parsed?.[resumeProgressKey];
+      return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+    } catch {
+      return 0;
+    }
+  }, [resumeProgressKey]);
+
+  const writeStoredProgressIndex = useCallback(
+    (index: number) => {
+      if (typeof window === 'undefined') return;
+      try {
+        const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
+        const parsed = (raw ? (JSON.parse(raw) as Record<string, number>) : {}) ?? {};
+        parsed[resumeProgressKey] = index;
+        window.localStorage.setItem(QUIZ_PROGRESS_STORAGE_KEY, JSON.stringify(parsed));
+      } catch {
+        // ignore localStorage errors in prototype mode
+      }
+    },
+    [resumeProgressKey],
+  );
+
+  const clearStoredProgressIndex = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      if (!parsed || typeof parsed !== 'object') return;
+      delete parsed[resumeProgressKey];
+      window.localStorage.setItem(QUIZ_PROGRESS_STORAGE_KEY, JSON.stringify(parsed));
+    } catch {
+      // ignore localStorage errors in prototype mode
+    }
+  }, [resumeProgressKey]);
 
   const clearWrongJumpTimer = useCallback(() => {
     if (wrongJumpTimerRef.current !== null) {
@@ -201,6 +499,38 @@ export default function QuizPage({
       emblaApi.off('reInit', onSelect);
     };
   }, [clearWrongJumpTimer, emblaApi]);
+
+  // 仅在本页首次进入时根据「进入前」已存进度决定是否弹出答题记录（避免练到一半再次弹出）
+  useEffect(() => {
+    if (!emblaApi) return;
+    if (resumePromptCheckedRef.current) return;
+    resumePromptCheckedRef.current = true;
+
+    if (startIndex !== 0) {
+      setCanPersistProgress(true);
+      return;
+    }
+    if (returnPath && returnPath !== '/errors' && fromErrors) {
+      setCanPersistProgress(true);
+      return;
+    }
+
+    const stored = initialStoredProgress;
+    if (stored <= 0 || stored >= questions.length) {
+      setCanPersistProgress(true);
+      return;
+    }
+
+    setResumeDetectedIndex(stored);
+    setResumePromptOpen(true);
+  }, [emblaApi, fromErrors, initialStoredProgress, questions.length, returnPath, startIndex]);
+
+  // 用户处理完答题记录（或无需弹窗）后，才写入本次练习进度
+  useEffect(() => {
+    if (!emblaApi || !canPersistProgress) return;
+    if (resumePromptOpen) return;
+    writeStoredProgressIndex(qIndex);
+  }, [canPersistProgress, emblaApi, qIndex, resumePromptOpen, writeStoredProgressIndex]);
 
   const displayTotalFromState = (location.state as { displayTotalQ?: number } | undefined)?.displayTotalQ;
   const totalForDisplay =
@@ -229,9 +559,6 @@ export default function QuizPage({
   const progressCurrent = initialProgressIndex ?? qIndex + 1;
   const isReferenceLayout = optionLayout !== 'default';
   const enableQuizNote = enableQuizNoteProp ?? true;
-  const errorBookMode: ErrorBookMode = mode === 'sprint' ? 'sprint' : 'basic';
-  const errorBookSectionId = fromErrors ? id ?? '' : '';
-  const errorBookEnabled = fromErrors && errorBookSectionId.length > 0;
   const currentErrorBookState =
     errorBookEnabled && questions[qIndex]
       ? getErrorBookItemState({
@@ -268,7 +595,24 @@ export default function QuizPage({
         isCorrect: answerIsCorrect,
       });
       if (result.revivedFromMastered) {
-        setErrorBookToast('该题已复活回错题本');
+        setCenterStatusToast('该题已复活回错题本');
+        if (errorBookListFilter === 'mastered' && returnPath === '/errors') {
+          if (reviveExitTimerRef.current !== null) {
+            window.clearTimeout(reviveExitTimerRef.current);
+          }
+          reviveExitTimerRef.current = window.setTimeout(() => {
+            reviveExitTimerRef.current = null;
+            navigate('/errors', {
+              replace: true,
+              state: {
+                ...(errorBookReturnState ?? {}),
+                mode,
+                bucketFilter: 'pending',
+                focusSectionId: errorBookSectionId,
+              },
+            });
+          }, 1200);
+        }
       }
     }
 
@@ -291,6 +635,7 @@ export default function QuizPage({
     if (qIndex < questions.length - 1) {
       emblaApi?.scrollTo(qIndex + 1);
     } else {
+      clearStoredProgressIndex();
       let correct = 0;
       let wrong = 0;
       for (let i = 0; i < questions.length; i++) {
@@ -354,6 +699,10 @@ export default function QuizPage({
   useEffect(() => {
     return () => {
       clearWrongJumpTimer();
+      if (reviveExitTimerRef.current !== null) {
+        window.clearTimeout(reviveExitTimerRef.current);
+        reviveExitTimerRef.current = null;
+      }
     };
   }, [clearWrongJumpTimer]);
 
@@ -369,6 +718,24 @@ export default function QuizPage({
     return () => window.clearTimeout(timer);
   }, [errorBookToast]);
 
+  useEffect(() => {
+    if (!centerStatusToast) return;
+    const timer = window.setTimeout(() => setCenterStatusToast(null), 1200);
+    return () => window.clearTimeout(timer);
+  }, [centerStatusToast]);
+
+  useEffect(() => {
+    if (!archiveToastOpen) return;
+    const timer = window.setTimeout(() => {
+      setArchiveToastOpen(false);
+      if (archiveToastNextIndex !== null) {
+        emblaApi?.scrollTo(archiveToastNextIndex);
+      }
+      setArchiveToastNextIndex(null);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [archiveToastNextIndex, archiveToastOpen, emblaApi]);
+
   const handleConfirmArchive = async () => {
     if (!errorBookEnabled || archiveTargetQuestionId === null || archivePending) return;
     setArchivePending(true);
@@ -380,10 +747,9 @@ export default function QuizPage({
       });
       setArchiveConfirmOpen(false);
       setArchiveTargetQuestionId(null);
-      setErrorBookToast('已归档到已掌握');
-      if (qIndex < questions.length - 1) {
-        emblaApi?.scrollTo(qIndex + 1);
-      }
+      // 归档成功：在“本题”居中轻提示，关闭后再跳下一题，避免串到下一题题干下
+      setArchiveToastNextIndex(qIndex < questions.length - 1 ? qIndex + 1 : null);
+      setArchiveToastOpen(true);
     } catch {
       setErrorBookToast('归档失败，请重试');
     } finally {
@@ -418,7 +784,13 @@ export default function QuizPage({
         }}
       >
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            if (returnPath) {
+              setExitConfirmOpen(true);
+            } else {
+              navigate(-1);
+            }
+          }}
           style={{
             width: 31.997,
             height: 31.997,
@@ -436,82 +808,36 @@ export default function QuizPage({
           <ChevronLeft style={{ width: 20, height: 20, color: '#003459', strokeWidth: 2.4 }} />
         </button>
 
-        {fromErrors ? (
-          <div
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <p
             style={{
-              flex: 1,
-              minWidth: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 2,
+              margin: 0,
+              fontSize: 11,
+              lineHeight: '16.5px',
+              letterSpacing: '0.0645px',
+              color: '#8E98A8',
+              fontWeight: 500,
+              maxWidth: fromErrors ? 180 : undefined,
+              overflow: fromErrors ? 'hidden' : undefined,
+              textOverflow: fromErrors ? 'ellipsis' : undefined,
+              whiteSpace: fromErrors ? 'nowrap' : undefined,
             }}
           >
-            <p
-              style={{
-                margin: 0,
-                fontSize: 11,
-                lineHeight: '16.5px',
-                letterSpacing: '0.0645px',
-                color: '#8E98A8',
-                fontWeight: 500,
-                maxWidth: 180,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {headerSubtitle}
-            </p>
-            <div
-              style={{
-                height: 30,
-                padding: '0 18px',
-                borderRadius: 999,
-                background: '#003459',
-                color: '#fff',
-                fontSize: 16,
-                fontWeight: 700,
-                letterSpacing: '-0.31px',
-                display: 'grid',
-                placeItems: 'center',
-              }}
-            >
-              {headerTitle}
-            </div>
-            <div style={{ marginTop: 2 }}>
-              <MasteryDots progress={currentErrorBookState?.masteryProgress ?? 0} size={8} gap={6} />
-            </div>
-          </div>
-        ) : (
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: 11,
-                lineHeight: '16.5px',
-                letterSpacing: '0.0645px',
-                color: '#8E98A8',
-                fontWeight: 500,
-              }}
-            >
-              {headerSubtitle}
-            </p>
-            <p
-              style={{
-                margin: 0,
-                fontSize: 14,
-                lineHeight: '21px',
-                letterSpacing: '-0.1504px',
-                fontWeight: 600,
-                color: '#1A1F24',
-              }}
-            >
-              {headerTitle}
-            </p>
-          </div>
-        )}
+            {headerSubtitle}
+          </p>
+          <p
+            style={{
+              margin: 0,
+              fontSize: 14,
+              lineHeight: '21px',
+              letterSpacing: '-0.1504px',
+              fontWeight: 600,
+              color: '#1A1F24',
+            }}
+          >
+            {fromErrors ? '错题本' : headerTitle}
+          </p>
+        </div>
 
         <p
           style={{
@@ -525,6 +851,130 @@ export default function QuizPage({
           {progressCurrent} / {totalForDisplay}
         </p>
       </div>
+
+      {exitConfirmOpen && (
+        <QuizCenterDialog
+          zIndexBackdrop={72}
+          zIndexPanel={73}
+          onBackdropClick={() => setExitConfirmOpen(false)}
+        >
+          <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#1A1F24' }}>退出提示</p>
+          <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.45, color: '#667280' }}>
+            是否确认退出答题？
+          </p>
+          <div style={{ marginTop: 14, display: 'flex', gap: 10, minWidth: 0 }}>
+            <button
+              type="button"
+              onClick={() => setExitConfirmOpen(false)}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: 44,
+                borderRadius: 999,
+                border: '1px solid rgba(0,52,89,0.18)',
+                background: '#fff',
+                color: '#003459',
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setExitConfirmOpen(false);
+                navigate(returnPath, { state: (location.state as any)?.returnState ?? undefined });
+              }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: 44,
+                borderRadius: 999,
+                border: 'none',
+                background: '#003459',
+                color: '#fff',
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              退出
+            </button>
+          </div>
+        </QuizCenterDialog>
+      )}
+
+      {resumePromptOpen && (
+        <QuizCenterDialog
+          zIndexBackdrop={70}
+          zIndexPanel={71}
+          onBackdropClick={() => {
+            setResumePromptOpen(false);
+            setCanPersistProgress(true);
+            setQIndex(resumeDetectedIndex);
+            emblaApi?.scrollTo(resumeDetectedIndex);
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#1A1F24' }}>答题记录</p>
+          <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.45, color: '#667280' }}>
+            检测到上次练习到第{resumeDetectedIndex + 1}题，是否继续？
+          </p>
+          <div style={{ marginTop: 14, display: 'flex', gap: 10, minWidth: 0 }}>
+            <button
+              type="button"
+              onClick={() => {
+                clearStoredProgressIndex();
+                setResumePromptOpen(false);
+                setCanPersistProgress(true);
+                setQIndex(0);
+                emblaApi?.scrollTo(0);
+              }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: 44,
+                borderRadius: 999,
+                border: '1px solid rgba(0,52,89,0.18)',
+                background: '#fff',
+                color: '#003459',
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              重做
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setResumePromptOpen(false);
+                setCanPersistProgress(true);
+                setQIndex(resumeDetectedIndex);
+                emblaApi?.scrollTo(resumeDetectedIndex);
+              }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: 44,
+                borderRadius: 999,
+                border: 'none',
+                background: '#003459',
+                color: '#fff',
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              继续
+            </button>
+          </div>
+        </QuizCenterDialog>
+      )}
+
+      {archiveToastOpen && <CenterStatusToast message="已归档至已掌握" />}
+      {centerStatusToast && <CenterStatusToast message={centerStatusToast} />}
 
       {/* ── Main area ── */}
       <div
@@ -694,86 +1144,80 @@ export default function QuizPage({
                       />
                     )}
 
-                    {errorBookEnabled && slideAnswered && (
-                      <div
-                        style={{
-                          marginTop: 14,
-                          borderRadius: 14,
-                          background: '#F5F8FA',
-                          border: '1px solid rgba(0,52,89,0.08)',
-                          padding: '12px 14px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 10,
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <p
+                    {errorBookEnabled && slideAnswered && (() => {
+                      const status = getErrorBookItemState({
+                        mode: errorBookMode,
+                        sectionId: errorBookSectionId,
+                        questionId: question.id,
+                      });
+                      const remain = Math.max(0, 3 - status.masteryProgress);
+                      const helperText = status.archived
+                        ? '已归档到已掌握'
+                        : status.canArchive
+                          ? '你已连续答对三次，可归档至已掌握'
+                          : `再答对 ${remain} 次即可归档至已掌握`;
+
+                      const hasRepeatedWrongBar = status.repeatedWrong;
+                      const showArchiveFooterBar =
+                        status.canArchive && !status.archived && slideIndex === qIndex;
+
+                      return (
+                        <div
+                          style={{
+                            marginTop: 14,
+                            display: 'flex',
+                            flexDirection: 'column',
+                          }}
+                        >
+                          <div
                             style={{
-                              margin: 0,
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: '#003459',
+                              padding: '12px 14px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 10,
+                              background: MASTERY_CARD_BG,
+                              border: MASTERY_CARD_BORDER,
+                              borderRadius: MASTERY_CARD_RADIUS,
+                              position: 'relative',
+                              zIndex: 2,
+                              overflow: 'hidden',
+                              ...(showArchiveFooterBar || hasRepeatedWrongBar
+                                ? {
+                                    borderBottomLeftRadius: 0,
+                                    borderBottomRightRadius: 0,
+                                  }
+                                : {}),
                             }}
                           >
-                            掌握进度
-                          </p>
-                          <MasteryDots
-                            progress={
-                              getErrorBookItemState({
-                                mode: errorBookMode,
-                                sectionId: errorBookSectionId,
-                                questionId: question.id,
-                              }).masteryProgress
-                            }
-                            size={9}
-                            gap={6}
-                          />
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <p
+                                style={{
+                                  margin: 0,
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                  color: MASTERY_TITLE_COLOR,
+                                }}
+                              >
+                                掌握进度
+                              </p>
+                              <MasteryDots progress={status.masteryProgress} size={9} gap={6} />
+                            </div>
+                            <p style={{ margin: 0, fontSize: 13, color: '#5F6B78' }}>{helperText}</p>
+                          </div>
+                          {showArchiveFooterBar && (
+                            <ArchiveToMasteredFooterBar
+                              pending={archivePending}
+                              connectBelow={hasRepeatedWrongBar}
+                              onClick={() => {
+                                setArchiveTargetQuestionId(question.id);
+                                setArchiveConfirmOpen(true);
+                              }}
+                            />
+                          )}
+                          {hasRepeatedWrongBar && <RepeatedWrongFooterBar />}
                         </div>
-
-                        {(() => {
-                          const status = getErrorBookItemState({
-                            mode: errorBookMode,
-                            sectionId: errorBookSectionId,
-                            questionId: question.id,
-                          });
-                          const remain = Math.max(0, 3 - status.masteryProgress);
-                          const helperText = status.archived
-                            ? '已归档到已掌握'
-                            : status.canArchive
-                              ? '已满足归档条件'
-                              : `再答对 ${remain} 次即可归档`;
-                          return (
-                            <>
-                              <p style={{ margin: 0, fontSize: 13, color: '#5F6B78' }}>{helperText}</p>
-                              {status.canArchive && !status.archived && slideIndex === qIndex && (
-                                <button
-                                  type="button"
-                                  disabled={archivePending}
-                                  onClick={() => {
-                                    setArchiveTargetQuestionId(question.id);
-                                    setArchiveConfirmOpen(true);
-                                  }}
-                                  style={{
-                                    width: '100%',
-                                    height: 42,
-                                    borderRadius: 999,
-                                    border: 'none',
-                                    background: archivePending ? 'rgba(0,52,89,0.45)' : '#003459',
-                                    color: '#fff',
-                                    fontSize: 14,
-                                    fontWeight: 700,
-                                    cursor: archivePending ? 'wait' : 'pointer',
-                                  }}
-                                >
-                                  {archivePending ? '归档中...' : '归档到已掌握'}
-                                </button>
-                              )}
-                            </>
-                          );
-                        })()}
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {slideAnalysisVisible && (
                       <QuizInlineAnalysis
@@ -835,7 +1279,7 @@ export default function QuizPage({
           </div>
         )}
 
-        {errorBookToast && (
+        {errorBookToast && !fromErrors && (
           <div
             style={{
               position: 'absolute',

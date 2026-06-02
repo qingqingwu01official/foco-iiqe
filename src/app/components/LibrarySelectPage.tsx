@@ -82,7 +82,7 @@ function pressOut(el: HTMLDivElement) {
   el.style.transform = 'scale(1)';
 }
 
-function CheckOutlineBox() {
+function CheckOutlineBox({ checked }: { checked: boolean }) {
   return (
     <div style={{ width: 20, height: 20, position: 'relative' }}>
       <div
@@ -94,9 +94,23 @@ function CheckOutlineBox() {
           height: 16,
           borderRadius: 2,
           border: '1.4px solid #003459',
-          background: 'transparent',
+          background: checked ? '#003459' : 'transparent',
         }}
       />
+      {checked && (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          width={14}
+          height={14}
+          style={{ position: 'absolute', left: 3, top: 3, color: '#fff' }}
+        >
+          <path
+            fill="currentColor"
+            d="M9.0 16.2 4.8 12.0 3.4 13.4 9.0 19.0 21.0 7.0 19.6 5.6z"
+          />
+        </svg>
+      )}
     </div>
   );
 }
@@ -278,7 +292,7 @@ export default function LibrarySelectPage() {
                   <p style={{ margin: 0, fontSize: 13, color: 'rgba(158,166,176,0.85)' }}>
                     {lib.done}/{lib.total}
                   </p>
-                  <CheckOutlineBox />
+                  <CheckOutlineBox checked={lib.total > 0 && lib.done >= lib.total} />
                 </div>
               </div>
 
@@ -367,7 +381,7 @@ export default function LibrarySelectPage() {
                       <p style={{ margin: 0, fontSize: 13, color: 'rgba(158,166,176,0.85)' }}>
                         {sec.done}/{sec.total}
                       </p>
-                      <CheckOutlineBox />
+                      <CheckOutlineBox checked={sec.total > 0 && sec.done >= sec.total} />
                     </div>
                   </div>
                 ))}

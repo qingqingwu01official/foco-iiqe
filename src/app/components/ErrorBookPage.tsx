@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { ChevronLeft } from 'lucide-react';
 import { QUESTIONS } from '../data/quizQuestions';
 import {
-  getErrorBookSectionBucket,
-  type ErrorBookBucket,
+  countErrorBookQuestionsByListFilter,
+  ensureErrorBookListDemoSeed,
+  ensureRevivalDemoQuestion,
+  sectionHasQuestionsInListFilter,
+  summarizeSectionMasteryInListFilter,
+  type ErrorBookListFilter,
   type ErrorBookMode,
+  type SectionMasterySummary,
 } from '../lib/errorBookArchive';
 
 type SortMode = '按章节' | '按重要性';
@@ -38,12 +43,32 @@ interface LibraryGroup {
 }
 
 const SORT_OPTIONS: SortMode[] = ['按章节', '按重要性'];
-const BUCKET_OPTIONS: Array<{ id: ErrorBookBucket; label: string }> = [
+const BUCKET_OPTIONS: Array<{ id: ErrorBookListFilter; label: string }> = [
   { id: 'pending', label: '待复习' },
-  { id: 'archivable', label: '可归档' },
-  { id: 'mastered', label: '已掌握' },
+  { id: 'mastered', label: '已掌握错题' },
 ];
-const ERROR_BOOK_QUESTION_IDS = QUESTIONS.map((q) => q.id);
+
+function questionIdsForSection(section: SectionRow): number[] {
+  const n = section.errorCount;
+  if (n === undefined || n <= 0) return [];
+  return QUESTIONS.slice(0, Math.min(n, QUESTIONS.length)).map((q) => q.id);
+}
+
+const REVIVAL_DEMO_SECTION_ID = '1a';
+const REVIVAL_DEMO_QUESTION_INDEX = 1;
+
+function mergeMasterySummaries(summaries: SectionMasterySummary[]): SectionMasterySummary {
+  return summaries.reduce(
+    (acc, item) => ({
+      totalInFilter: acc.totalInFilter + item.totalInFilter,
+      needOneMore: acc.needOneMore + item.needOneMore,
+      needTwoMore: acc.needTwoMore + item.needTwoMore,
+      masterySum: acc.masterySum + item.masterySum,
+      repeatedWrong: acc.repeatedWrong + item.repeatedWrong,
+    }),
+    { totalInFilter: 0, needOneMore: 0, needTwoMore: 0, masterySum: 0, repeatedWrong: 0 },
+  );
+}
 
 const BASIC_CHAPTERS: ChapterGroup[] = [
   {
@@ -147,7 +172,7 @@ function pressOut(el: HTMLDivElement) {
   el.style.transform = 'scale(1)';
 }
 
-function CheckOutlineBox() {
+function CheckOutlineBox({ checked }: { checked: boolean }) {
   return (
     <div style={{ width: 20, height: 20, position: 'relative' }}>
       <div
@@ -159,14 +184,28 @@ function CheckOutlineBox() {
           height: 16,
           borderRadius: 2,
           border: '1.4px solid #003459',
-          background: 'transparent',
+          background: checked ? '#003459' : 'transparent',
         }}
       />
+      {checked && (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          width={14}
+          height={14}
+          style={{ position: 'absolute', left: 3, top: 3, color: '#fff' }}
+        >
+          <path
+            fill="currentColor"
+            d="M9.0 16.2 4.8 12.0 3.4 13.4 9.0 19.0 21.0 7.0 19.6 5.6z"
+          />
+        </svg>
+      )}
     </div>
   );
 }
 
-function ListMeta({ done, total }: { done: number; total: number }) {
+function ErrorCountMeta({ total, showCheck }: { total: number; showCheck: boolean }) {
   return (
     <div
       style={{
@@ -179,15 +218,29 @@ function ListMeta({ done, total }: { done: number; total: number }) {
         flexShrink: 0,
       }}
     >
-      <p style={{ margin: 0, fontSize: 13, color: 'rgba(158,166,176,0.85)' }}>
-        {done}/{total}
-      </p>
-      <CheckOutlineBox />
+      <p style={{ margin: 0, fontSize: 13, color: 'rgba(158,166,176,0.85)' }}>共{total}题</p>
+      {showCheck ? <CheckOutlineBox checked={total === 0} /> : <div style={{ width: 20, height: 20 }} />}
     </div>
   );
 }
 
-function ProgressBlock({ done, total, accuracy }: { done: number; total: number; accuracy: number }) {
+function MasteryHintBlock({
+  summary,
+  listFilter,
+}: {
+  summary: SectionMasterySummary;
+  listFilter: ErrorBookListFilter;
+}) {
+  const { totalInFilter, needOneMore, needTwoMore, masterySum, repeatedWrong } = summary;
+  const gray = 'rgba(158,166,176,0.92)';
+
+  const renderCountPhrase = (count: number, suffix: string) => (
+    <span style={{ fontSize: 11, color: gray }}>
+      <span style={{ fontWeight: 700, color: gray }}>{count}题</span>
+      {suffix}
+    </span>
+  );
+
   return (
     <>
       <div
@@ -200,11 +253,25 @@ function ProgressBlock({ done, total, accuracy }: { done: number; total: number;
           overflow: 'hidden',
         }}
       >
-        <div style={{ width: getRailFillWidth(done, total), height: 2, background: '#6B7580' }} />
+        {/* 装饰线：设计不变，但不表达具体进度 */}
+        <div style={{ width: '18%', height: 2, background: '#6B7580' }} />
       </div>
-      <p style={{ margin: 0, marginTop: 7, fontSize: 11, color: 'rgba(158,166,176,0.92)' }}>
-        正确率：{accuracy}%
-      </p>
+      {listFilter === 'pending' && (
+        <div
+          style={{
+            marginTop: 7,
+            display: 'flex',
+            flexWrap: 'nowrap',
+            gap: 10,
+            justifyContent: 'flex-start',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {renderCountPhrase(needOneMore, '还需做对1次')}
+          {renderCountPhrase(needTwoMore, '还需做对2次')}
+          {renderCountPhrase(repeatedWrong, '反复错')}
+        </div>
+      )}
     </>
   );
 }
@@ -216,7 +283,7 @@ export default function ErrorBookPage() {
     (location.state as {
       mode?: string;
       sortMode?: SortMode;
-      bucketFilter?: ErrorBookBucket;
+      bucketFilter?: ErrorBookListFilter | 'archivable';
       focusChapterId?: number;
       focusLibraryId?: string;
       focusSectionId?: string;
@@ -237,10 +304,8 @@ export default function ErrorBookPage() {
     }
     return mode === 'sprint' ? '按重要性' : '按章节';
   });
-  const [bucketFilter, setBucketFilter] = useState<ErrorBookBucket>(() => {
-    if (state.bucketFilter === 'pending' || state.bucketFilter === 'archivable' || state.bucketFilter === 'mastered') {
-      return state.bucketFilter;
-    }
+  const [bucketFilter, setBucketFilter] = useState<ErrorBookListFilter>(() => {
+    if (state.bucketFilter === 'mastered') return 'mastered';
     return 'pending';
   });
   const [filterOpen, setFilterOpen] = useState(false);
@@ -251,21 +316,78 @@ export default function ErrorBookPage() {
     state.focusLibraryId ?? '',
   );
   const focusSectionId = state.focusSectionId;
+  const [archiveRevision, setArchiveRevision] = useState(0);
 
-  const getSectionBucket = (sectionId: string): ErrorBookBucket =>
-    getErrorBookSectionBucket({
+  useEffect(() => {
+    ensureErrorBookListDemoSeed();
+    ensureRevivalDemoQuestion();
+    setArchiveRevision((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    const next = state.bucketFilter;
+    if (next === 'mastered' || next === 'pending') {
+      setBucketFilter(next);
+      setArchiveRevision((n) => n + 1);
+    }
+  }, [location.key, state.bucketFilter]);
+
+  const sectionRows = useMemo((): SectionRow[] => {
+    if (sortMode === '按重要性') {
+      return SPRINT_LIBRARIES.flatMap((library) => library.subsections);
+    }
+    return BASIC_CHAPTERS.flatMap((chapter) => chapter.sections);
+  }, [sortMode]);
+
+  const sectionQuestionSets = useMemo(
+    () =>
+      sectionRows
+        .map((section) => ({
+          sectionId: section.id,
+          questionIds: questionIdsForSection(section),
+        }))
+        .filter((entry) => entry.questionIds.length > 0),
+    [sectionRows],
+  );
+
+  const sectionQuestionIds = (section: SectionRow) => questionIdsForSection(section);
+
+  const sectionInListBucket = (section: SectionRow) => {
+    const questionIds = sectionQuestionIds(section);
+    if (questionIds.length === 0) return false;
+    return sectionHasQuestionsInListFilter({
       mode: archiveMode,
-      sectionId,
-      questionIds: ERROR_BOOK_QUESTION_IDS,
+      sectionId: section.id,
+      questionIds,
+      listFilter: bucketFilter,
+    });
+  };
+
+  const sectionMasterySummary = (section: SectionRow) =>
+    summarizeSectionMasteryInListFilter({
+      mode: archiveMode,
+      sectionId: section.id,
+      questionIds: sectionQuestionIds(section),
+      listFilter: bucketFilter,
     });
 
-  const inBucket = (sectionId: string) => getSectionBucket(sectionId) === bucketFilter;
+  const chapterMasterySummary = (sections: SectionRow[]) =>
+    mergeMasterySummaries(sections.map((section) => sectionMasterySummary(section)));
 
-  const hasAnyBasicSection = BASIC_CHAPTERS.some((chapter) =>
-    chapter.sections.some((section) => inBucket(section.id)),
-  );
-  const hasAnySprintSection = SPRINT_LIBRARIES.some((library) =>
-    library.subsections.some((section) => inBucket(section.id)),
+  const bucketCounts = useMemo(
+    () => ({
+      pending: countErrorBookQuestionsByListFilter({
+        mode: archiveMode,
+        sections: sectionQuestionSets,
+        listFilter: 'pending',
+      }),
+      mastered: countErrorBookQuestionsByListFilter({
+        mode: archiveMode,
+        sections: sectionQuestionSets,
+        listFilter: 'mastered',
+      }),
+    }),
+    [archiveMode, sectionQuestionSets, archiveRevision],
   );
 
   const listReturnState = { mode, sortMode, bucketFilter };
@@ -284,10 +406,14 @@ export default function ErrorBookPage() {
         sectionName: payload.sectionName,
         chapterName: payload.chapterName,
         libraryName: payload.libraryName,
-        questionIndex: 0,
+        errorBookListFilter: bucketFilter,
+        questionIndex:
+          payload.sectionId === REVIVAL_DEMO_SECTION_ID && bucketFilter === 'pending'
+            ? REVIVAL_DEMO_QUESTION_INDEX
+            : 0,
         displayTotalQ: payload.displayTotal ?? 20,
         returnPath: '/errors',
-        returnState: listReturnState,
+        returnState: { ...listReturnState, focusSectionId: payload.sectionId },
       },
     });
   };
@@ -352,38 +478,99 @@ export default function ErrorBookPage() {
   };
 
   const renderBucketTabs = () => (
-    <div style={{ padding: '4px 20px 10px 20px', display: 'flex', gap: 8, flexShrink: 0 }}>
-      {BUCKET_OPTIONS.map((item) => {
-        const active = bucketFilter === item.id;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setBucketFilter(item.id)}
-            style={{
-              flex: 1,
-              height: 34,
-              borderRadius: 999,
-              border: active ? 'none' : '1px solid rgba(0,52,89,0.12)',
-              background: active ? '#003459' : '#fff',
-              color: active ? '#fff' : 'rgba(0,52,89,0.75)',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            {item.label}
-          </button>
-        );
-      })}
+    <div
+      style={{
+        flexShrink: 0,
+        padding: '12px 20px calc(12px + env(safe-area-inset-bottom, 0px))',
+        background: 'transparent',
+        borderTop: 'none',
+        boxShadow: 'none',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'stretch',
+          justifyContent: 'space-between',
+          gap: 8,
+          background: 'transparent',
+          borderRadius: 0,
+          padding: 0,
+          boxShadow: 'none',
+        }}
+      >
+        {BUCKET_OPTIONS.map((item) => {
+          const active = bucketFilter === item.id;
+          const count = bucketCounts[item.id];
+          return (
+            <button
+              key={item.id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setBucketFilter(item.id)}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: 'none',
+                borderRadius: 14,
+                background: active ? 'rgba(0,167,225,0.1)' : 'transparent',
+                padding: '10px 6px 8px',
+                cursor: 'pointer',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                transition: 'background 0.18s ease, transform 0.12s ease',
+              }}
+              onPointerDown={(e) => {
+                e.currentTarget.style.transform = 'scale(0.98)';
+              }}
+              onPointerUp={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
+              onPointerCancel={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
+              onPointerLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
+            >
+              <span
+                style={{
+                  margin: 0,
+                  fontSize: 28,
+                  lineHeight: '32px',
+                  fontWeight: 700,
+                  letterSpacing: '-0.5px',
+                  color: active ? '#003459' : '#1A1F24',
+                }}
+              >
+                {count}
+              </span>
+              <span
+                style={{
+                  margin: 0,
+                  fontSize: 12,
+                  lineHeight: '16px',
+                  fontWeight: active ? 600 : 400,
+                  color: active ? '#003459' : '#8E98A8',
+                }}
+              >
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 
   const renderChapterList = () => (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '6px 20px 40px 20px' }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '6px 20px 16px 20px' }}>
       {BASIC_CHAPTERS.map((chapter, index) => {
-        const visibleSections = chapter.sections.filter((section) => inBucket(section.id));
-        if (visibleSections.length === 0) return null;
+        const visibleSections = chapter.sections.filter((section) => sectionInListBucket(section));
+        const chapterSummary = chapterMasterySummary(chapter.sections);
         const isExpanded = chapter.id === expandedChapterId;
         return (
           <div key={chapter.id}>
@@ -426,14 +613,16 @@ export default function ErrorBookPage() {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ margin: 0, fontSize: 15, fontWeight: 500, color: '#1A1F24' }}>{chapter.name}</p>
-                <ProgressBlock done={chapter.done} total={chapter.total} accuracy={chapter.accuracy} />
+                <MasteryHintBlock summary={chapterSummary} listFilter={bucketFilter} />
               </div>
-              <ListMeta done={chapter.done} total={chapter.total} />
+              <ErrorCountMeta total={chapterSummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
             </div>
 
             {isExpanded &&
+              (visibleSections.length > 0 ? (
               visibleSections.map((section) => {
                 const isFocused = focusSectionId === section.id;
+                const sectionSummary = sectionMasterySummary(section);
                 return (
                 <div
                   key={section.id}
@@ -442,7 +631,7 @@ export default function ErrorBookPage() {
                       sectionId: section.id,
                       sectionName: section.name,
                       chapterName: chapter.name,
-                      displayTotal: section.total,
+                      displayTotal: sectionSummary.totalInFilter,
                     })
                   }
                   style={{
@@ -451,8 +640,8 @@ export default function ErrorBookPage() {
                     alignItems: 'flex-start',
                     gap: 10,
                     paddingLeft: 22,
-                    paddingTop: 10,
-                    paddingBottom: 10,
+                    paddingTop: 8,
+                    paddingBottom: 8,
                     cursor: 'pointer',
                     transition: 'transform 0.16s ease',
                     borderRadius: 12,
@@ -479,35 +668,35 @@ export default function ErrorBookPage() {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: '#1A1F24' }}>{section.name}</p>
-                    <ProgressBlock done={section.done} total={section.total} accuracy={section.accuracy} />
+                    <MasteryHintBlock summary={sectionSummary} listFilter={bucketFilter} />
                   </div>
-                  <ListMeta done={section.done} total={section.total} />
+                  <ErrorCountMeta total={sectionSummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
                 </div>
               );
-              })}
+              })
+              ) : (
+                <p
+                  style={{
+                    margin: 0,
+                    padding: '8px 22px 12px',
+                    fontSize: 13,
+                    color: '#8E98A8',
+                  }}
+                >
+                  本章在当前分段暂无错题
+                </p>
+              ))}
           </div>
         );
       })}
-      {!hasAnyBasicSection && (
-        <div
-          style={{
-            paddingTop: 46,
-            textAlign: 'center',
-            color: '#8E98A8',
-            fontSize: 13,
-          }}
-        >
-          当前分段暂无题目
-        </div>
-      )}
     </div>
   );
 
   const renderLibraryList = () => (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '6px 20px 40px 20px' }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '6px 20px 16px 20px' }}>
       {SPRINT_LIBRARIES.map((library, index) => {
-        const visibleSubsections = library.subsections.filter((section) => inBucket(section.id));
-        if (visibleSubsections.length === 0) return null;
+        const visibleSubsections = library.subsections.filter((section) => sectionInListBucket(section));
+        const librarySummary = chapterMasterySummary(library.subsections);
         const isExpanded = library.id === expandedLibraryId;
         return (
           <div key={library.id}>
@@ -550,14 +739,16 @@ export default function ErrorBookPage() {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ margin: 0, fontSize: 15, fontWeight: 500, color: '#1A1F24' }}>{library.name}</p>
-                <ProgressBlock done={library.done} total={library.total} accuracy={library.accuracy} />
+                <MasteryHintBlock summary={librarySummary} listFilter={bucketFilter} />
               </div>
-              <ListMeta done={library.done} total={library.total} />
+              <ErrorCountMeta total={librarySummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
             </div>
 
             {isExpanded &&
+              (visibleSubsections.length > 0 ? (
               visibleSubsections.map((section) => {
                 const isFocused = focusSectionId === section.id;
+                const sectionSummary = sectionMasterySummary(section);
                 return (
                 <div
                   key={section.id}
@@ -566,7 +757,7 @@ export default function ErrorBookPage() {
                       sectionId: section.id,
                       sectionName: section.name,
                       libraryName: library.name,
-                      displayTotal: section.total,
+                      displayTotal: sectionSummary.totalInFilter,
                     })
                   }
                   style={{
@@ -575,8 +766,8 @@ export default function ErrorBookPage() {
                     alignItems: 'flex-start',
                     gap: 10,
                     paddingLeft: 22,
-                    paddingTop: 10,
-                    paddingBottom: 10,
+                    paddingTop: 8,
+                    paddingBottom: 8,
                     cursor: 'pointer',
                     transition: 'transform 0.16s ease',
                     borderRadius: 12,
@@ -603,27 +794,27 @@ export default function ErrorBookPage() {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: '#1A1F24' }}>{section.name}</p>
-                    <ProgressBlock done={section.done} total={section.total} accuracy={section.accuracy} />
+                    <MasteryHintBlock summary={sectionSummary} listFilter={bucketFilter} />
                   </div>
-                  <ListMeta done={section.done} total={section.total} />
+                  <ErrorCountMeta total={sectionSummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
                 </div>
               );
-              })}
+              })
+              ) : (
+                <p
+                  style={{
+                    margin: 0,
+                    padding: '8px 22px 12px',
+                    fontSize: 13,
+                    color: '#8E98A8',
+                  }}
+                >
+                  本库在当前分段暂无错题
+                </p>
+              ))}
           </div>
         );
       })}
-      {!hasAnySprintSection && (
-        <div
-          style={{
-            paddingTop: 46,
-            textAlign: 'center',
-            color: '#8E98A8',
-            fontSize: 13,
-          }}
-        >
-          当前分段暂无题目
-        </div>
-      )}
     </div>
   );
 
@@ -654,7 +845,7 @@ export default function ErrorBookPage() {
         }}
       >
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => navigate('/home', { state: { mode } })}
           aria-label="返回"
           style={{
             width: 30,
@@ -714,9 +905,20 @@ export default function ErrorBookPage() {
       </div>
 
       {renderFilterPanel()}
-      {renderBucketTabs()}
 
-      {sortMode === '按重要性' ? renderLibraryList() : renderChapterList()}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {sortMode === '按重要性' ? renderLibraryList() : renderChapterList()}
+      </div>
+
+      {renderBucketTabs()}
     </div>
   );
 }
