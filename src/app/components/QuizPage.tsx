@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router';
 import { ChevronLeft } from 'lucide-react';
 import useEmblaCarousel from 'embla-carousel-react';
@@ -18,6 +18,7 @@ import {
   archiveErrorBookItem,
   filterQuizQuestionsForErrorBookList,
   getErrorBookItemState,
+  isQuestionTracked,
   recordErrorBookAnswer,
   type ErrorBookListFilter,
   type ErrorBookMode,
@@ -33,6 +34,44 @@ const MASTERY_CARD_RADIUS = 14;
 const MASTERY_CARD_BG = '#F5F8FA';
 const MASTERY_CARD_BORDER = '1px solid rgba(0,52,89,0.08)';
 const MASTERY_TITLE_COLOR = '#003459';
+const MASTERY_FOOTER_BAR_H = 44;
+
+/** 提示条文案：在「掌握进度下沿」与「提示条下沿」之间的可见带内垂直居中 */
+function MasteryFooterBarContent({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        boxSizing: 'border-box',
+        paddingTop: MASTERY_CARD_RADIUS,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingLeft: 14,
+        paddingRight: 14,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function masteryFooterBarShellStyle(connectBelow: boolean, background: string): CSSProperties {
+  return {
+    position: 'relative',
+    zIndex: 1,
+    marginTop: -MASTERY_CARD_RADIUS,
+    width: '100%',
+    height: MASTERY_FOOTER_BAR_H,
+    boxSizing: 'border-box',
+    border: 'none',
+    background,
+    borderRadius: connectBelow ? 0 : `0 0 ${MASTERY_CARD_RADIUS}px ${MASTERY_CARD_RADIUS}px`,
+    padding: 0,
+    overflow: 'visible',
+  };
+}
 
 const QUIZ_DIALOG_SIDE_PADDING = 16;
 
@@ -149,71 +188,72 @@ function ArchiveToMasteredFooterBar({
       onClick={onClick}
       aria-label={pending ? '归档中' : '点击可归档至已掌握'}
       style={{
-        position: 'relative',
-        zIndex: 1,
-        marginTop: -MASTERY_CARD_RADIUS,
-        width: '100%',
-        height: 44,
-        padding: 0,
-        border: 'none',
+        ...masteryFooterBarShellStyle(
+          connectBelow,
+          'linear-gradient(180deg, rgba(232,255,240,0.98) 0%, rgba(214,245,228,0.98) 100%)',
+        ),
         cursor: pending ? 'wait' : 'pointer',
         opacity: pending ? 0.65 : 1,
-        background:
-          'linear-gradient(180deg, rgba(232,255,240,0.98) 0%, rgba(214,245,228,0.98) 100%)',
-        borderRadius: connectBelow
-          ? 0
-          : `0 0 ${MASTERY_CARD_RADIUS}px ${MASTERY_CARD_RADIUS}px`,
       }}
     >
-      <span
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginTop: MASTERY_CARD_RADIUS,
-          height: `calc(100% - ${MASTERY_CARD_RADIUS}px)`,
-          padding: '0 14px',
-          width: '100%',
-          boxSizing: 'border-box',
-          fontSize: 12,
-          lineHeight: 1.2,
-          fontWeight: 600,
-          color: '#15803D',
-          letterSpacing: '0.01em',
-          textAlign: 'center',
-        }}
-      >
-        {pending ? '归档中...' : '点击可归档至已掌握'}
-      </span>
+      <MasteryFooterBarContent>
+        <span
+          style={{
+            fontSize: 12,
+            lineHeight: 1.2,
+            fontWeight: 600,
+            color: '#15803D',
+            letterSpacing: '0.01em',
+            textAlign: 'center',
+          }}
+        >
+          {pending ? '归档中...' : '点击可归档至已掌握'}
+        </span>
+      </MasteryFooterBarContent>
     </button>
   );
 }
 
-/** 与掌握进度块共用中间描边，下段独立圆底（14px，与上框一致） */
-function RepeatedWrongFooterBar() {
+/** 复活题：已掌握后再次答错（橙色，与反复错红条同构） */
+function RevivedFooterBar({ connectBelow = false }: { connectBelow?: boolean }) {
   return (
     <div
       role="note"
-      style={{
-        position: 'relative',
-        zIndex: 1,
-        marginTop: -MASTERY_CARD_RADIUS,
-        height: 44,
-        background: 'linear-gradient(180deg, rgba(255,235,232,0.98) 0%, rgba(255,220,214,0.98) 100%)',
-        border: 'none',
-        borderRadius: `0 0 ${MASTERY_CARD_RADIUS}px ${MASTERY_CARD_RADIUS}px`,
-      }}
+      style={masteryFooterBarShellStyle(
+        connectBelow,
+        'linear-gradient(180deg, rgba(255,243,232,0.98) 0%, rgba(255,224,196,0.98) 100%)',
+      )}
     >
-      {/* 上方会被掌握进度圆底覆盖 14px，这里对“可见区域”做垂直居中 */}
-      <div
-        style={{
-          marginTop: MASTERY_CARD_RADIUS,
-          height: `calc(100% - ${MASTERY_CARD_RADIUS}px)`,
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 14px',
-        }}
-      >
+      <MasteryFooterBarContent>
+        <p
+          style={{
+            margin: 0,
+            fontSize: 12,
+            lineHeight: 1.2,
+            fontWeight: 600,
+            color: '#C2410C',
+            letterSpacing: '0.01em',
+            textAlign: 'center',
+          }}
+        >
+          复活题，加强巩固可掌握
+        </p>
+      </MasteryFooterBarContent>
+    </div>
+  );
+}
+
+/** 反复错：累计答错超过 5 次 */
+function RepeatedWrongFooterBar({ connectBelow = false }: { connectBelow?: boolean }) {
+  return (
+    <div
+      role="note"
+      style={masteryFooterBarShellStyle(
+        connectBelow,
+        'linear-gradient(180deg, rgba(255,235,232,0.98) 0%, rgba(255,220,214,0.98) 100%)',
+      )}
+    >
+      <MasteryFooterBarContent>
         <p
           style={{
             margin: 0,
@@ -222,11 +262,12 @@ function RepeatedWrongFooterBar() {
             fontWeight: 600,
             color: '#B82E18',
             letterSpacing: '0.01em',
+            textAlign: 'center',
           }}
         >
           反复错，建议深入看解析/找老师答疑
         </p>
-      </div>
+      </MasteryFooterBarContent>
     </div>
   );
 }
@@ -559,14 +600,13 @@ export default function QuizPage({
   const progressCurrent = initialProgressIndex ?? qIndex + 1;
   const isReferenceLayout = optionLayout !== 'default';
   const enableQuizNote = enableQuizNoteProp ?? true;
-  const currentErrorBookState =
-    errorBookEnabled && questions[qIndex]
-      ? getErrorBookItemState({
-          mode: errorBookMode,
-          sectionId: errorBookSectionId,
-          questionId: questions[qIndex].id,
-        })
-      : null;
+  const currentQuestionId = questions[qIndex]?.id;
+  const showMasteryPanel =
+    currentQuestionId !== undefined &&
+    (errorBookEnabled || isQuestionTracked(currentQuestionId));
+  const currentErrorBookState = showMasteryPanel
+    ? getErrorBookItemState({ questionId: currentQuestionId })
+    : null;
   const quizReturnPath = id
     ? `/quiz/${mode}/${id}`
     : location.pathname.startsWith('/demo/')
@@ -587,16 +627,10 @@ export default function QuizPage({
     const answerIsCorrect = optionIndex === question.correct;
     setAnswers((prev) => ({ ...prev, [questionIndex]: optionIndex }));
 
-    if (errorBookEnabled) {
-      const result = recordErrorBookAnswer({
-        mode: errorBookMode,
-        sectionId: errorBookSectionId,
-        questionId: question.id,
-        isCorrect: answerIsCorrect,
-      });
-      if (result.revivedFromMastered) {
-        setCenterStatusToast('该题已复活回错题本');
-        if (errorBookListFilter === 'mastered' && returnPath === '/errors') {
+    const result = recordErrorBookAnswer({ questionId: question.id, isCorrect: answerIsCorrect });
+    if (result.revivedFromMastered) {
+      setCenterStatusToast('该题已复活回错题本');
+      if (errorBookEnabled && errorBookListFilter === 'mastered' && returnPath === '/errors') {
           if (reviveExitTimerRef.current !== null) {
             window.clearTimeout(reviveExitTimerRef.current);
           }
@@ -613,7 +647,6 @@ export default function QuizPage({
             });
           }, 1200);
         }
-      }
     }
 
     if (answerIsCorrect) {
@@ -737,14 +770,10 @@ export default function QuizPage({
   }, [archiveToastNextIndex, archiveToastOpen, emblaApi]);
 
   const handleConfirmArchive = async () => {
-    if (!errorBookEnabled || archiveTargetQuestionId === null || archivePending) return;
+    if (archiveTargetQuestionId === null || archivePending) return;
     setArchivePending(true);
     try {
-      archiveErrorBookItem({
-        mode: errorBookMode,
-        sectionId: errorBookSectionId,
-        questionId: archiveTargetQuestionId,
-      });
+      archiveErrorBookItem({ questionId: archiveTargetQuestionId });
       setArchiveConfirmOpen(false);
       setArchiveTargetQuestionId(null);
       // 归档成功：在“本题”居中轻提示，关闭后再跳下一题，避免串到下一题题干下
@@ -1144,12 +1173,8 @@ export default function QuizPage({
                       />
                     )}
 
-                    {errorBookEnabled && slideAnswered && (() => {
-                      const status = getErrorBookItemState({
-                        mode: errorBookMode,
-                        sectionId: errorBookSectionId,
-                        questionId: question.id,
-                      });
+                    {showMasteryPanel && slideAnswered && (() => {
+                      const status = getErrorBookItemState({ questionId: question.id });
                       const remain = Math.max(0, 3 - status.masteryProgress);
                       const helperText = status.archived
                         ? '已归档到已掌握'
@@ -1157,9 +1182,12 @@ export default function QuizPage({
                           ? '你已连续答对三次，可归档至已掌握'
                           : `再答对 ${remain} 次即可归档至已掌握`;
 
+                      const hasRevivedBar = status.revived && !status.archived;
                       const hasRepeatedWrongBar = status.repeatedWrong;
                       const showArchiveFooterBar =
                         status.canArchive && !status.archived && slideIndex === qIndex;
+                      const hasFooterBelowCard =
+                        showArchiveFooterBar || hasRevivedBar || hasRepeatedWrongBar;
 
                       return (
                         <div
@@ -1180,13 +1208,10 @@ export default function QuizPage({
                               borderRadius: MASTERY_CARD_RADIUS,
                               position: 'relative',
                               zIndex: 2,
-                              overflow: 'hidden',
-                              ...(showArchiveFooterBar || hasRepeatedWrongBar
-                                ? {
-                                    borderBottomLeftRadius: 0,
-                                    borderBottomRightRadius: 0,
-                                  }
-                                : {}),
+                              overflow: 'visible',
+                              boxShadow: hasFooterBelowCard
+                                ? `0 ${MASTERY_CARD_RADIUS}px 0 ${MASTERY_CARD_BG}`
+                                : undefined,
                             }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1207,12 +1232,15 @@ export default function QuizPage({
                           {showArchiveFooterBar && (
                             <ArchiveToMasteredFooterBar
                               pending={archivePending}
-                              connectBelow={hasRepeatedWrongBar}
+                              connectBelow={hasRevivedBar || hasRepeatedWrongBar}
                               onClick={() => {
                                 setArchiveTargetQuestionId(question.id);
                                 setArchiveConfirmOpen(true);
                               }}
                             />
+                          )}
+                          {hasRevivedBar && (
+                            <RevivedFooterBar connectBelow={hasRepeatedWrongBar} />
                           )}
                           {hasRepeatedWrongBar && <RepeatedWrongFooterBar />}
                         </div>

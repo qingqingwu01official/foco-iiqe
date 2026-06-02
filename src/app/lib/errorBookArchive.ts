@@ -5,11 +5,16 @@ export type ErrorBookBucket = 'pending' | 'archivable' | 'mastered';
 export type ErrorBookListFilter = 'pending' | 'mastered';
 export type MasteryProgress = 0 | 1 | 2 | 3;
 
+/** 累计答错超过此次数 →「反复错」 */
+export const REPEATED_WRONG_THRESHOLD = 5;
+
 type PersistedItemState = {
   masteryProgress: MasteryProgress;
   archived: boolean;
-  /** 自「已掌握」答错复活，刷题页展示「反复错」 */
-  repeatedWrong?: boolean;
+  /** 累计答错次数（跨章节/分重点/错题本统一累计） */
+  wrongCount: number;
+  /** 已掌握后再次答错 →「复活题」 */
+  revived?: boolean;
 };
 
 type PersistedStore = Record<string, PersistedItemState>;
@@ -17,10 +22,14 @@ type PersistedStore = Record<string, PersistedItemState>;
 export type ErrorBookItemState = PersistedItemState & {
   canArchive: boolean;
   bucket: ErrorBookBucket;
+  /** wrongCount > REPEATED_WRONG_THRESHOLD */
   repeatedWrong: boolean;
+  /** 已掌握后答错复活（展示橙色条） */
+  revived: boolean;
 };
 
-const STORAGE_KEY = 'iiqe-error-book-archive-v1';
+const STORAGE_KEY = 'iiqe-error-book-archive-v2';
+const LEGACY_STORAGE_KEY = 'iiqe-error-book-archive-v1';
 const DEMO_SEED_KEY = 'iiqe-error-book-list-demo-v3';
 
 function clampProgress(value: number): MasteryProgress {
@@ -30,18 +39,82 @@ function clampProgress(value: number): MasteryProgress {
   return 3;
 }
 
-function keyOf(mode: ErrorBookMode, sectionId: string, questionId: number) {
-  return `${mode}:${sectionId}:${questionId}`;
+/** 按题目 ID 全局唯一（不区分章节/分重点/错题本入口） */
+function questionKey(questionId: number) {
+  return `q:${questionId}`;
+}
+
+function isRepeatedWrong(wrongCount: number): boolean {
+  return wrongCount > REPEATED_WRONG_THRESHOLD;
+}
+
+function sanitize(item?: Partial<PersistedItemState>): PersistedItemState {
+  if (!item) {
+    return { masteryProgress: 0, archived: false, wrongCount: 0, revived: false };
+  }
+  const wrongCount = Math.max(0, Math.floor(Number(item.wrongCount) || 0));
+  return {
+    masteryProgress: clampProgress(item.masteryProgress ?? 0),
+    archived: Boolean(item.archived),
+    wrongCount,
+    revived: Boolean(item.revived),
+  };
+}
+
+function mergePersisted(a: PersistedItemState, b: PersistedItemState): PersistedItemState {
+  const merged = sanitize({
+    masteryProgress: Math.max(a.masteryProgress, b.masteryProgress) as MasteryProgress,
+    archived: a.archived && b.archived,
+    wrongCount: Math.max(a.wrongCount, b.wrongCount),
+    revived: a.revived || b.revived,
+  });
+  if (!merged.archived && (a.archived !== b.archived)) {
+    merged.archived = false;
+  }
+  return merged;
+}
+
+function migrateLegacyStore(legacy: PersistedStore): PersistedStore {
+  const next: PersistedStore = {};
+  for (const [key, raw] of Object.entries(legacy)) {
+    const parts = key.split(':');
+    const qid = Number(parts[parts.length - 1]);
+    if (!Number.isFinite(qid)) continue;
+    const nk = questionKey(qid);
+    const item = sanitize({
+      masteryProgress: raw.masteryProgress,
+      archived: raw.archived,
+      wrongCount: (raw as { wrongCount?: number }).wrongCount ?? 0,
+      revived: (raw as { repeatedWrong?: boolean }).repeatedWrong
+        ? true
+        : (raw as { revived?: boolean }).revived,
+    });
+    if (isRepeatedWrong(item.wrongCount) || (raw as { repeatedWrong?: boolean }).repeatedWrong) {
+      item.wrongCount = Math.max(item.wrongCount, REPEATED_WRONG_THRESHOLD + 1);
+    }
+    if (next[nk]) {
+      next[nk] = mergePersisted(next[nk], item);
+    } else {
+      next[nk] = item;
+    }
+  }
+  return next;
 }
 
 function readStore(): PersistedStore {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as PersistedStore;
-    if (!parsed || typeof parsed !== 'object') return {};
-    return parsed;
+    const rawV2 = window.localStorage.getItem(STORAGE_KEY);
+    if (rawV2) {
+      const parsed = JSON.parse(rawV2) as PersistedStore;
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+    const rawV1 = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!rawV1) return {};
+    const legacy = JSON.parse(rawV1) as PersistedStore;
+    const migrated = migrateLegacyStore(legacy);
+    writeStore(migrated);
+    return migrated;
   } catch {
     return {};
   }
@@ -56,17 +129,6 @@ function writeStore(store: PersistedStore) {
   }
 }
 
-function sanitize(item?: PersistedItemState): PersistedItemState {
-  if (!item) {
-    return { masteryProgress: 0, archived: false, repeatedWrong: false };
-  }
-  return {
-    masteryProgress: clampProgress(item.masteryProgress),
-    archived: Boolean(item.archived),
-    repeatedWrong: Boolean(item.repeatedWrong),
-  };
-}
-
 function toBucket(item: PersistedItemState): ErrorBookBucket {
   if (item.archived) return 'mastered';
   if (item.masteryProgress >= 3) return 'archivable';
@@ -77,32 +139,39 @@ function withComputed(item: PersistedItemState): ErrorBookItemState {
   const safe = sanitize(item);
   return {
     ...safe,
-    repeatedWrong: Boolean(safe.repeatedWrong),
+    revived: Boolean(safe.revived),
+    repeatedWrong: isRepeatedWrong(safe.wrongCount),
     canArchive: !safe.archived && safe.masteryProgress >= 3,
     bucket: toBucket(safe),
   };
 }
 
+/** 该题是否已有错题本跟踪记录（任意入口刷过并写入） */
+export function isQuestionTracked(questionId: number): boolean {
+  const store = readStore();
+  return questionKey(questionId) in store;
+}
+
 export function getErrorBookItemState(params: {
-  mode: ErrorBookMode;
-  sectionId: string;
+  mode?: ErrorBookMode;
+  sectionId?: string;
   questionId: number;
 }): ErrorBookItemState {
-  const { mode, sectionId, questionId } = params;
+  const { questionId } = params;
   const store = readStore();
-  const item = sanitize(store[keyOf(mode, sectionId, questionId)]);
+  const item = sanitize(store[questionKey(questionId)]);
   return withComputed(item);
 }
 
 export function recordErrorBookAnswer(params: {
-  mode: ErrorBookMode;
-  sectionId: string;
+  mode?: ErrorBookMode;
+  sectionId?: string;
   questionId: number;
   isCorrect: boolean;
 }): { state: ErrorBookItemState; revivedFromMastered: boolean } {
-  const { mode, sectionId, questionId, isCorrect } = params;
+  const { questionId, isCorrect } = params;
   const store = readStore();
-  const itemKey = keyOf(mode, sectionId, questionId);
+  const itemKey = questionKey(questionId);
   const current = sanitize(store[itemKey]);
 
   const revivedFromMastered = !isCorrect && current.archived;
@@ -111,17 +180,22 @@ export function recordErrorBookAnswer(params: {
   if (isCorrect) {
     if (current.archived) {
       next = current;
+    } else if (!isQuestionTracked(questionId) && current.wrongCount === 0) {
+      return { state: withComputed(current), revivedFromMastered: false };
     } else {
       next = {
+        ...current,
         masteryProgress: clampProgress(current.masteryProgress + 1),
         archived: false,
       };
     }
   } else {
+    const wrongCount = (store[itemKey] ? current.wrongCount : 0) + 1;
     next = {
       masteryProgress: 0,
       archived: false,
-      repeatedWrong: revivedFromMastered ? true : Boolean(current.repeatedWrong),
+      wrongCount,
+      revived: revivedFromMastered ? true : Boolean(current.revived),
     };
   }
 
@@ -132,17 +206,19 @@ export function recordErrorBookAnswer(params: {
 }
 
 export function archiveErrorBookItem(params: {
-  mode: ErrorBookMode;
-  sectionId: string;
+  mode?: ErrorBookMode;
+  sectionId?: string;
   questionId: number;
 }): ErrorBookItemState {
-  const { mode, sectionId, questionId } = params;
+  const { questionId } = params;
   const store = readStore();
-  const itemKey = keyOf(mode, sectionId, questionId);
+  const itemKey = questionKey(questionId);
+  const prev = sanitize(store[itemKey]);
   const next: PersistedItemState = {
     masteryProgress: 3,
     archived: true,
-    repeatedWrong: false,
+    wrongCount: prev.wrongCount,
+    revived: false,
   };
   store[itemKey] = next;
   writeStore(store);
@@ -150,7 +226,6 @@ export function archiveErrorBookItem(params: {
 }
 
 export function getErrorBookItemListFilter(state: ErrorBookItemState): ErrorBookListFilter {
-  // 列表分段以 archived 为准：已归档 → 已掌握错题；否则 → 待复习（含 archivable）
   return state.archived ? 'mastered' : 'pending';
 }
 
@@ -161,24 +236,25 @@ export function filterQuizQuestionsForErrorBookList<T extends { id: number }>(pa
   questions: T[];
   listFilter: ErrorBookListFilter;
 }): T[] {
-  const { mode, sectionId, questions, listFilter } = params;
+  const { questions, listFilter } = params;
   return questions.filter((q) => {
-    const state = getErrorBookItemState({ mode, sectionId, questionId: q.id });
+    if (!isQuestionTracked(q.id)) return false;
+    const state = getErrorBookItemState({ questionId: q.id });
     return getErrorBookItemListFilter(state) === listFilter;
   });
 }
 
-/** 列表分段：达标未归档（archivable）与待复习合并为 pending */
 export function getErrorBookSectionListBucket(params: {
   mode: ErrorBookMode;
   sectionId: string;
   questionIds: number[];
 }): ErrorBookListFilter {
-  const { mode, sectionId, questionIds } = params;
+  const { questionIds } = params;
   if (questionIds.length === 0) return 'pending';
 
   for (const questionId of questionIds) {
-    const state = getErrorBookItemState({ mode, sectionId, questionId });
+    if (!isQuestionTracked(questionId)) continue;
+    const state = getErrorBookItemState({ questionId });
     if (getErrorBookItemListFilter(state) === 'pending') {
       return 'pending';
     }
@@ -186,16 +262,16 @@ export function getErrorBookSectionListBucket(params: {
   return 'mastered';
 }
 
-/** 该节是否含有当前分段下的错题（支持一节内待复习/已掌握并存） */
 export function sectionHasQuestionsInListFilter(params: {
   mode: ErrorBookMode;
   sectionId: string;
   questionIds: number[];
   listFilter: ErrorBookListFilter;
 }): boolean {
-  const { mode, sectionId, questionIds, listFilter } = params;
+  const { questionIds, listFilter } = params;
   for (const questionId of questionIds) {
-    const state = getErrorBookItemState({ mode, sectionId, questionId });
+    if (!isQuestionTracked(questionId)) continue;
+    const state = getErrorBookItemState({ questionId });
     if (getErrorBookItemListFilter(state) === listFilter) {
       return true;
     }
@@ -203,7 +279,6 @@ export function sectionHasQuestionsInListFilter(params: {
   return false;
 }
 
-/** 距归档还需答对的次数（3 - masteryProgress） */
 export function remainingCorrectToArchive(progress: MasteryProgress, archived: boolean) {
   if (archived) return 0;
   return Math.max(0, 3 - progress);
@@ -214,13 +289,13 @@ export function countSectionQuestionsByRemainingCorrect(params: {
   sectionId: string;
   questionIds: number[];
   listFilter: ErrorBookListFilter;
-  /** 1 = 再做对 1 次；2 = 再做对 2 次 */
-  remainingCorrect: 1 | 2;
+  remainingCorrect: 1 | 2 | 3;
 }): number {
-  const { mode, sectionId, questionIds, listFilter, remainingCorrect } = params;
+  const { questionIds, listFilter, remainingCorrect } = params;
   let count = 0;
   for (const questionId of questionIds) {
-    const state = getErrorBookItemState({ mode, sectionId, questionId });
+    if (!isQuestionTracked(questionId)) continue;
+    const state = getErrorBookItemState({ questionId });
     if (getErrorBookItemListFilter(state) !== listFilter) continue;
     if (state.archived) continue;
     if (remainingCorrectToArchive(state.masteryProgress, state.archived) === remainingCorrect) {
@@ -232,8 +307,9 @@ export function countSectionQuestionsByRemainingCorrect(params: {
 
 export type SectionMasterySummary = {
   totalInFilter: number;
-  needOneMore: number;
+  needThreeMore: number;
   needTwoMore: number;
+  needOneMore: number;
   masterySum: number;
   repeatedWrong: number;
 };
@@ -244,26 +320,29 @@ export function summarizeSectionMasteryInListFilter(params: {
   questionIds: number[];
   listFilter: ErrorBookListFilter;
 }): SectionMasterySummary {
-  const { mode, sectionId, questionIds, listFilter } = params;
+  const { questionIds, listFilter } = params;
   let totalInFilter = 0;
-  let needOneMore = 0;
+  let needThreeMore = 0;
   let needTwoMore = 0;
+  let needOneMore = 0;
   let masterySum = 0;
   let repeatedWrong = 0;
 
   for (const questionId of questionIds) {
-    const state = getErrorBookItemState({ mode, sectionId, questionId });
+    if (!isQuestionTracked(questionId)) continue;
+    const state = getErrorBookItemState({ questionId });
     if (getErrorBookItemListFilter(state) !== listFilter) continue;
     totalInFilter += 1;
     if (state.archived) continue;
     if (state.repeatedWrong) repeatedWrong += 1;
     const remain = remainingCorrectToArchive(state.masteryProgress, state.archived);
     masterySum += state.masteryProgress;
-    if (remain === 1) needOneMore += 1;
+    if (remain === 3) needThreeMore += 1;
     else if (remain === 2) needTwoMore += 1;
+    else if (remain === 1) needOneMore += 1;
   }
 
-  return { totalInFilter, needOneMore, needTwoMore, masterySum, repeatedWrong };
+  return { totalInFilter, needThreeMore, needTwoMore, needOneMore, masterySum, repeatedWrong };
 }
 
 export function countSectionQuestionsInListFilter(params: {
@@ -272,10 +351,11 @@ export function countSectionQuestionsInListFilter(params: {
   questionIds: number[];
   listFilter: ErrorBookListFilter;
 }): number {
-  const { mode, sectionId, questionIds, listFilter } = params;
+  const { questionIds, listFilter } = params;
   let count = 0;
   for (const questionId of questionIds) {
-    const state = getErrorBookItemState({ mode, sectionId, questionId });
+    if (!isQuestionTracked(questionId)) continue;
+    const state = getErrorBookItemState({ questionId });
     if (getErrorBookItemListFilter(state) === listFilter) {
       count += 1;
     }
@@ -283,25 +363,23 @@ export function countSectionQuestionsInListFilter(params: {
   return count;
 }
 
-/** 原型演示：写入部分已掌握错题，便于「已掌握」列表非空 */
 export function ensureErrorBookListDemoSeed() {
   if (typeof window === 'undefined') return;
 
   if (!window.localStorage.getItem(DEMO_SEED_KEY)) {
     const store = readStore();
-    const archived = (mode: ErrorBookMode, sectionId: string, questionId: number) => {
-      store[keyOf(mode, sectionId, questionId)] = {
+    const archived = (questionId: number) => {
+      store[questionKey(questionId)] = {
         masteryProgress: 3,
         archived: true,
+        wrongCount: 0,
+        revived: false,
       };
     };
 
-    archived('basic', '1a', 1);
-    archived('basic', '2a', 2);
-    archived('basic', '3b', 3);
-    archived('sprint', 'c-ch1', 1);
-    archived('sprint', 'i-ch1', 2);
-
+    archived(1);
+    archived(2);
+    archived(3);
     writeStore(store);
     window.localStorage.setItem(DEMO_SEED_KEY, '1');
   }
@@ -309,18 +387,20 @@ export function ensureErrorBookListDemoSeed() {
   ensureRevivalDemoQuestion();
 }
 
-/** 演示复活题：basic · 1a · 第 2 题（未归档时写入，不覆盖用户已练进度） */
+/** 演示复活题：题目 id=2，橙色复活条（非反复错） */
 export function ensureRevivalDemoQuestion() {
   if (typeof window === 'undefined') return;
   const store = readStore();
-  const revivalKey = keyOf('basic', '1a', 2);
+  const revivalKey = questionKey(2);
   const existing = store[revivalKey];
   if (existing?.archived) return;
-  if (existing && !existing.repeatedWrong && existing.masteryProgress > 1) return;
+  if (existing && existing.wrongCount > REPEATED_WRONG_THRESHOLD) return;
+  if (existing && !existing.revived && existing.masteryProgress > 1) return;
   store[revivalKey] = {
     masteryProgress: existing?.masteryProgress ?? 1,
     archived: false,
-    repeatedWrong: true,
+    wrongCount: existing?.wrongCount ?? 2,
+    revived: true,
   };
   writeStore(store);
 }
@@ -330,11 +410,12 @@ export function countErrorBookQuestionsByListFilter(params: {
   sections: Array<{ sectionId: string; questionIds: number[] }>;
   listFilter: ErrorBookListFilter;
 }): number {
-  const { mode, sections, listFilter } = params;
+  const { sections, listFilter } = params;
   let count = 0;
-  for (const { sectionId, questionIds } of sections) {
+  for (const { questionIds } of sections) {
     for (const questionId of questionIds) {
-      const state = getErrorBookItemState({ mode, sectionId, questionId });
+      if (!isQuestionTracked(questionId)) continue;
+      const state = getErrorBookItemState({ questionId });
       if (getErrorBookItemListFilter(state) === listFilter) {
         count += 1;
       }
@@ -351,9 +432,9 @@ export function getErrorBookSectionBucket(params: {
 }): ErrorBookBucket {
   const list = getErrorBookSectionListBucket(params);
   if (list === 'mastered') return 'mastered';
-  const { mode, sectionId, questionIds } = params;
+  const { questionIds } = params;
   for (const questionId of questionIds) {
-    const state = getErrorBookItemState({ mode, sectionId, questionId });
+    const state = getErrorBookItemState({ questionId });
     if (state.bucket === 'archivable') return 'archivable';
   }
   return 'pending';

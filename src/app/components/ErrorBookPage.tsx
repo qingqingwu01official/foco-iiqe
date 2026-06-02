@@ -61,12 +61,20 @@ function mergeMasterySummaries(summaries: SectionMasterySummary[]): SectionMaste
   return summaries.reduce(
     (acc, item) => ({
       totalInFilter: acc.totalInFilter + item.totalInFilter,
-      needOneMore: acc.needOneMore + item.needOneMore,
+      needThreeMore: acc.needThreeMore + item.needThreeMore,
       needTwoMore: acc.needTwoMore + item.needTwoMore,
+      needOneMore: acc.needOneMore + item.needOneMore,
       masterySum: acc.masterySum + item.masterySum,
       repeatedWrong: acc.repeatedWrong + item.repeatedWrong,
     }),
-    { totalInFilter: 0, needOneMore: 0, needTwoMore: 0, masterySum: 0, repeatedWrong: 0 },
+    {
+      totalInFilter: 0,
+      needThreeMore: 0,
+      needTwoMore: 0,
+      needOneMore: 0,
+      masterySum: 0,
+      repeatedWrong: 0,
+    },
   );
 }
 
@@ -231,13 +239,21 @@ function MasteryHintBlock({
   summary: SectionMasterySummary;
   listFilter: ErrorBookListFilter;
 }) {
-  const { totalInFilter, needOneMore, needTwoMore, masterySum, repeatedWrong } = summary;
+  const { needThreeMore, needTwoMore, needOneMore, repeatedWrong } = summary;
   const gray = 'rgba(158,166,176,0.92)';
 
-  const renderCountPhrase = (count: number, suffix: string) => (
-    <span style={{ fontSize: 11, color: gray }}>
+  const renderCountPhrase = (count: number, label: string) => (
+    <span
+      style={{
+        fontSize: 10,
+        color: gray,
+        lineHeight: 1.2,
+        flexShrink: 1,
+        minWidth: 0,
+      }}
+    >
       <span style={{ fontWeight: 700, color: gray }}>{count}题</span>
-      {suffix}
+      {label}
     </span>
   );
 
@@ -262,13 +278,18 @@ function MasteryHintBlock({
             marginTop: 7,
             display: 'flex',
             flexWrap: 'nowrap',
-            gap: 10,
-            justifyContent: 'flex-start',
-            whiteSpace: 'nowrap',
+            gap: 6,
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            width: '100%',
+            maxWidth: '100%',
+            minWidth: 0,
+            overflow: 'hidden',
           }}
         >
-          {renderCountPhrase(needOneMore, '还需做对1次')}
-          {renderCountPhrase(needTwoMore, '还需做对2次')}
+          {renderCountPhrase(needThreeMore, '需做对3次')}
+          {renderCountPhrase(needTwoMore, '需做对2次')}
+          {renderCountPhrase(needOneMore, '需做对1次')}
           {renderCountPhrase(repeatedWrong, '反复错')}
         </div>
       )}
