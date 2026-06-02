@@ -3,6 +3,7 @@ import HomePage from './components/HomePage';
 import ChapterListPage from './components/ChapterListPage';
 import LibrarySelectPage from './components/LibrarySelectPage';
 import QuizPage from './components/QuizPage';
+import QuizPracticeCompletePage from './components/QuizPracticeCompletePage';
 import GridOverviewPage from './components/GridOverviewPage';
 import ErrorBookPage from './components/ErrorBookPage';
 import DesignSpecPage from './components/DesignSpecPage';
@@ -40,6 +41,7 @@ export default function App() {
           {/* ── 刷题 + 解析 ── */}
           <Route path="/quiz" element={<KeyedQuizPage />} />
           <Route path="/quiz/:mode/:id" element={<KeyedQuizPage />} />
+          <Route path="/quiz/:mode/:id/complete" element={<QuizPracticeCompletePage />} />
           <Route path="/analysis" element={<Navigate to="/quiz" replace />} />
 
           {/* ── 错题 + 格子 ── */}

@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { ChevronLeft } from 'lucide-react';
+import { QUESTIONS } from '../data/quizQuestions';
+import {
+  getErrorBookSectionBucket,
+  type ErrorBookBucket,
+  type ErrorBookMode,
+} from '../lib/errorBookArchive';
 
 type SortMode = '按章节' | '按重要性';
 
@@ -32,6 +38,12 @@ interface LibraryGroup {
 }
 
 const SORT_OPTIONS: SortMode[] = ['按章节', '按重要性'];
+const BUCKET_OPTIONS: Array<{ id: ErrorBookBucket; label: string }> = [
+  { id: 'pending', label: '待复习' },
+  { id: 'archivable', label: '可归档' },
+  { id: 'mastered', label: '已掌握' },
+];
+const ERROR_BOOK_QUESTION_IDS = QUESTIONS.map((q) => q.id);
 
 const BASIC_CHAPTERS: ChapterGroup[] = [
   {
@@ -200,7 +212,16 @@ function ProgressBlock({ done, total, accuracy }: { done: number; total: number;
 export default function ErrorBookPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const state = (location.state as { mode?: string; sortMode?: SortMode } | null) ?? {};
+  const state =
+    (location.state as {
+      mode?: string;
+      sortMode?: SortMode;
+      bucketFilter?: ErrorBookBucket;
+      focusChapterId?: number;
+      focusLibraryId?: string;
+      focusSectionId?: string;
+      fromPracticeComplete?: boolean;
+    } | null) ?? {};
 
   const mode =
     state.mode === 'sprint'
@@ -208,6 +229,7 @@ export default function ErrorBookPage() {
       : localStorage.getItem('iiqe_mode') === 'sprint'
       ? 'sprint'
       : 'basic';
+  const archiveMode: ErrorBookMode = mode === 'sprint' ? 'sprint' : 'basic';
 
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     if (state.sortMode === '按重要性' || state.sortMode === '按章节') {
@@ -215,11 +237,38 @@ export default function ErrorBookPage() {
     }
     return mode === 'sprint' ? '按重要性' : '按章节';
   });
+  const [bucketFilter, setBucketFilter] = useState<ErrorBookBucket>(() => {
+    if (state.bucketFilter === 'pending' || state.bucketFilter === 'archivable' || state.bucketFilter === 'mastered') {
+      return state.bucketFilter;
+    }
+    return 'pending';
+  });
   const [filterOpen, setFilterOpen] = useState(false);
-  const [expandedChapterId, setExpandedChapterId] = useState<number>(-1);
-  const [expandedLibraryId, setExpandedLibraryId] = useState<string>('');
+  const [expandedChapterId, setExpandedChapterId] = useState<number>(() =>
+    typeof state.focusChapterId === 'number' ? state.focusChapterId : -1,
+  );
+  const [expandedLibraryId, setExpandedLibraryId] = useState<string>(() =>
+    state.focusLibraryId ?? '',
+  );
+  const focusSectionId = state.focusSectionId;
 
-  const listReturnState = { mode, sortMode };
+  const getSectionBucket = (sectionId: string): ErrorBookBucket =>
+    getErrorBookSectionBucket({
+      mode: archiveMode,
+      sectionId,
+      questionIds: ERROR_BOOK_QUESTION_IDS,
+    });
+
+  const inBucket = (sectionId: string) => getSectionBucket(sectionId) === bucketFilter;
+
+  const hasAnyBasicSection = BASIC_CHAPTERS.some((chapter) =>
+    chapter.sections.some((section) => inBucket(section.id)),
+  );
+  const hasAnySprintSection = SPRINT_LIBRARIES.some((library) =>
+    library.subsections.some((section) => inBucket(section.id)),
+  );
+
+  const listReturnState = { mode, sortMode, bucketFilter };
 
   const goQuiz = (payload: {
     sectionId: string;
@@ -302,9 +351,39 @@ export default function ErrorBookPage() {
     );
   };
 
+  const renderBucketTabs = () => (
+    <div style={{ padding: '4px 20px 10px 20px', display: 'flex', gap: 8, flexShrink: 0 }}>
+      {BUCKET_OPTIONS.map((item) => {
+        const active = bucketFilter === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => setBucketFilter(item.id)}
+            style={{
+              flex: 1,
+              height: 34,
+              borderRadius: 999,
+              border: active ? 'none' : '1px solid rgba(0,52,89,0.12)',
+              background: active ? '#003459' : '#fff',
+              color: active ? '#fff' : 'rgba(0,52,89,0.75)',
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            {item.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   const renderChapterList = () => (
     <div style={{ flex: 1, overflowY: 'auto', padding: '6px 20px 40px 20px' }}>
       {BASIC_CHAPTERS.map((chapter, index) => {
+        const visibleSections = chapter.sections.filter((section) => inBucket(section.id));
+        if (visibleSections.length === 0) return null;
         const isExpanded = chapter.id === expandedChapterId;
         return (
           <div key={chapter.id}>
@@ -353,7 +432,9 @@ export default function ErrorBookPage() {
             </div>
 
             {isExpanded &&
-              chapter.sections.map((section) => (
+              visibleSections.map((section) => {
+                const isFocused = focusSectionId === section.id;
+                return (
                 <div
                   key={section.id}
                   onClick={() =>
@@ -374,6 +455,9 @@ export default function ErrorBookPage() {
                     paddingBottom: 10,
                     cursor: 'pointer',
                     transition: 'transform 0.16s ease',
+                    borderRadius: 12,
+                    background: isFocused ? 'rgba(0,167,225,0.08)' : 'transparent',
+                    outline: isFocused ? '1.5px solid rgba(0,167,225,0.35)' : 'none',
                   }}
                   onPointerDown={(e) => pressIn(e.currentTarget)}
                   onPointerUp={(e) => pressOut(e.currentTarget)}
@@ -399,16 +483,31 @@ export default function ErrorBookPage() {
                   </div>
                   <ListMeta done={section.done} total={section.total} />
                 </div>
-              ))}
+              );
+              })}
           </div>
         );
       })}
+      {!hasAnyBasicSection && (
+        <div
+          style={{
+            paddingTop: 46,
+            textAlign: 'center',
+            color: '#8E98A8',
+            fontSize: 13,
+          }}
+        >
+          当前分段暂无题目
+        </div>
+      )}
     </div>
   );
 
   const renderLibraryList = () => (
     <div style={{ flex: 1, overflowY: 'auto', padding: '6px 20px 40px 20px' }}>
       {SPRINT_LIBRARIES.map((library, index) => {
+        const visibleSubsections = library.subsections.filter((section) => inBucket(section.id));
+        if (visibleSubsections.length === 0) return null;
         const isExpanded = library.id === expandedLibraryId;
         return (
           <div key={library.id}>
@@ -457,7 +556,9 @@ export default function ErrorBookPage() {
             </div>
 
             {isExpanded &&
-              library.subsections.map((section) => (
+              visibleSubsections.map((section) => {
+                const isFocused = focusSectionId === section.id;
+                return (
                 <div
                   key={section.id}
                   onClick={() =>
@@ -478,6 +579,9 @@ export default function ErrorBookPage() {
                     paddingBottom: 10,
                     cursor: 'pointer',
                     transition: 'transform 0.16s ease',
+                    borderRadius: 12,
+                    background: isFocused ? 'rgba(0,167,225,0.08)' : 'transparent',
+                    outline: isFocused ? '1.5px solid rgba(0,167,225,0.35)' : 'none',
                   }}
                   onPointerDown={(e) => pressIn(e.currentTarget)}
                   onPointerUp={(e) => pressOut(e.currentTarget)}
@@ -503,10 +607,23 @@ export default function ErrorBookPage() {
                   </div>
                   <ListMeta done={section.done} total={section.total} />
                 </div>
-              ))}
+              );
+              })}
           </div>
         );
       })}
+      {!hasAnySprintSection && (
+        <div
+          style={{
+            paddingTop: 46,
+            textAlign: 'center',
+            color: '#8E98A8',
+            fontSize: 13,
+          }}
+        >
+          当前分段暂无题目
+        </div>
+      )}
     </div>
   );
 
@@ -597,6 +714,7 @@ export default function ErrorBookPage() {
       </div>
 
       {renderFilterPanel()}
+      {renderBucketTabs()}
 
       {sortMode === '按重要性' ? renderLibraryList() : renderChapterList()}
     </div>

@@ -13,11 +13,51 @@ import {
   stripOptionPrefix,
 } from './QuizReferenceOption';
 import { QUESTIONS, QUESTIONS_BY_CHAPTER, type QuizQuestion } from '../data/quizQuestions';
+import { buildErrorReviewQuizTarget } from '../utils/errorBookFocus';
+import {
+  archiveErrorBookItem,
+  getErrorBookItemState,
+  recordErrorBookAnswer,
+  type ErrorBookMode,
+} from '../lib/errorBookArchive';
 
 const DEFAULT_BOTTOM_BAR_H = 100;
 
 export type { QuizQuestion };
 export { QUESTIONS };
+
+function MasteryDots({
+  progress,
+  size = 9,
+  gap = 6,
+}: {
+  progress: number;
+  size?: number;
+  gap?: number;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap }}>
+      {[0, 1, 2].map((dot) => {
+        const active = dot < progress;
+        return (
+          <span
+            key={dot}
+            style={{
+              width: size,
+              height: size,
+              borderRadius: '50%',
+              background: active ? '#31C869' : '#D8E0E9',
+              transform: active ? 'scale(1)' : 'scale(0.92)',
+              opacity: active ? 1 : 0.92,
+              transition: 'all 160ms ease',
+              display: 'inline-block',
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
 type QuizPageProps = {
   questions?: QuizQuestion[];
@@ -121,6 +161,10 @@ export default function QuizPage({
   const [quizNoteHighlightText, setQuizNoteHighlightText] = useState('');
   const [quizNoteTargetIndex, setQuizNoteTargetIndex] = useState(0);
   const [noteSavedToast, setNoteSavedToast] = useState(false);
+  const [errorBookToast, setErrorBookToast] = useState<string | null>(null);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [archivePending, setArchivePending] = useState(false);
+  const [archiveTargetQuestionId, setArchiveTargetQuestionId] = useState<number | null>(null);
   const footerRef = useRef<HTMLDivElement | null>(null);
   const mainAreaRef = useRef<HTMLDivElement | null>(null);
   const pageRootRef = useRef<HTMLDivElement | null>(null);
@@ -185,6 +229,17 @@ export default function QuizPage({
   const progressCurrent = initialProgressIndex ?? qIndex + 1;
   const isReferenceLayout = optionLayout !== 'default';
   const enableQuizNote = enableQuizNoteProp ?? true;
+  const errorBookMode: ErrorBookMode = mode === 'sprint' ? 'sprint' : 'basic';
+  const errorBookSectionId = fromErrors ? id ?? '' : '';
+  const errorBookEnabled = fromErrors && errorBookSectionId.length > 0;
+  const currentErrorBookState =
+    errorBookEnabled && questions[qIndex]
+      ? getErrorBookItemState({
+          mode: errorBookMode,
+          sectionId: errorBookSectionId,
+          questionId: questions[qIndex].id,
+        })
+      : null;
   const quizReturnPath = id
     ? `/quiz/${mode}/${id}`
     : location.pathname.startsWith('/demo/')
@@ -205,6 +260,18 @@ export default function QuizPage({
     const answerIsCorrect = optionIndex === question.correct;
     setAnswers((prev) => ({ ...prev, [questionIndex]: optionIndex }));
 
+    if (errorBookEnabled) {
+      const result = recordErrorBookAnswer({
+        mode: errorBookMode,
+        sectionId: errorBookSectionId,
+        questionId: question.id,
+        isCorrect: answerIsCorrect,
+      });
+      if (result.revivedFromMastered) {
+        setErrorBookToast('该题已复活回错题本');
+      }
+    }
+
     if (answerIsCorrect) {
       revealAnalysis(questionIndex);
     } else {
@@ -224,7 +291,45 @@ export default function QuizPage({
     if (qIndex < questions.length - 1) {
       emblaApi?.scrollTo(qIndex + 1);
     } else {
-      navigate(-1);
+      let correct = 0;
+      let wrong = 0;
+      for (let i = 0; i < questions.length; i++) {
+        const picked = answers[i];
+        if (picked === undefined) continue;
+        if (picked === questions[i].correct) correct += 1;
+        else wrong += 1;
+      }
+      const routeId = id ?? '';
+      const returnPath = fromErrors
+        ? ((location.state as { returnPath?: string } | undefined)?.returnPath ?? '/errors')
+        : mode === 'sprint'
+          ? '/sprint/libraries'
+          : '/basic/chapters';
+      const returnState = (location.state as { returnState?: Record<string, unknown> } | undefined)
+        ?.returnState;
+
+      navigate(`/quiz/${mode}/${routeId}/complete`, {
+        replace: true,
+        state: {
+          mode,
+          fromErrors,
+          practiceStats: { correct, wrong, total: questions.length },
+          headerTitle,
+          headerSubtitle,
+          returnPath,
+          returnState,
+          sectionName,
+          libraryName,
+          chapterName: stateChapterName ?? chapterName ?? undefined,
+          errorReviewTarget: buildErrorReviewQuizTarget({
+            mode,
+            routeId,
+            sectionName,
+            chapterName: stateChapterName ?? chapterName ?? undefined,
+            libraryName,
+          }),
+        },
+      });
     }
   };
 
@@ -257,6 +362,34 @@ export default function QuizPage({
     const timer = window.setTimeout(() => setNoteSavedToast(false), 2200);
     return () => window.clearTimeout(timer);
   }, [noteSavedToast]);
+
+  useEffect(() => {
+    if (!errorBookToast) return;
+    const timer = window.setTimeout(() => setErrorBookToast(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [errorBookToast]);
+
+  const handleConfirmArchive = async () => {
+    if (!errorBookEnabled || archiveTargetQuestionId === null || archivePending) return;
+    setArchivePending(true);
+    try {
+      archiveErrorBookItem({
+        mode: errorBookMode,
+        sectionId: errorBookSectionId,
+        questionId: archiveTargetQuestionId,
+      });
+      setArchiveConfirmOpen(false);
+      setArchiveTargetQuestionId(null);
+      setErrorBookToast('已归档到已掌握');
+      if (qIndex < questions.length - 1) {
+        emblaApi?.scrollTo(qIndex + 1);
+      }
+    } catch {
+      setErrorBookToast('归档失败，请重试');
+    } finally {
+      setArchivePending(false);
+    }
+  };
 
   return (
     <div
@@ -303,32 +436,82 @@ export default function QuizPage({
           <ChevronLeft style={{ width: 20, height: 20, color: '#003459', strokeWidth: 2.4 }} />
         </button>
 
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <p
+        {fromErrors ? (
+          <div
             style={{
-              margin: 0,
-              fontSize: 11,
-              lineHeight: '16.5px',
-              letterSpacing: '0.0645px',
-              color: '#8E98A8',
-              fontWeight: 500,
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 2,
             }}
           >
-            {headerSubtitle}
-          </p>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 14,
-              lineHeight: '21px',
-              letterSpacing: '-0.1504px',
-              fontWeight: 600,
-              color: '#1A1F24',
-            }}
-          >
-            {headerTitle}
-          </p>
-        </div>
+            <p
+              style={{
+                margin: 0,
+                fontSize: 11,
+                lineHeight: '16.5px',
+                letterSpacing: '0.0645px',
+                color: '#8E98A8',
+                fontWeight: 500,
+                maxWidth: 180,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {headerSubtitle}
+            </p>
+            <div
+              style={{
+                height: 30,
+                padding: '0 18px',
+                borderRadius: 999,
+                background: '#003459',
+                color: '#fff',
+                fontSize: 16,
+                fontWeight: 700,
+                letterSpacing: '-0.31px',
+                display: 'grid',
+                placeItems: 'center',
+              }}
+            >
+              {headerTitle}
+            </div>
+            <div style={{ marginTop: 2 }}>
+              <MasteryDots progress={currentErrorBookState?.masteryProgress ?? 0} size={8} gap={6} />
+            </div>
+          </div>
+        ) : (
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: 11,
+                lineHeight: '16.5px',
+                letterSpacing: '0.0645px',
+                color: '#8E98A8',
+                fontWeight: 500,
+              }}
+            >
+              {headerSubtitle}
+            </p>
+            <p
+              style={{
+                margin: 0,
+                fontSize: 14,
+                lineHeight: '21px',
+                letterSpacing: '-0.1504px',
+                fontWeight: 600,
+                color: '#1A1F24',
+              }}
+            >
+              {headerTitle}
+            </p>
+          </div>
+        )}
 
         <p
           style={{
@@ -511,6 +694,87 @@ export default function QuizPage({
                       />
                     )}
 
+                    {errorBookEnabled && slideAnswered && (
+                      <div
+                        style={{
+                          marginTop: 14,
+                          borderRadius: 14,
+                          background: '#F5F8FA',
+                          border: '1px solid rgba(0,52,89,0.08)',
+                          padding: '12px 14px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 10,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <p
+                            style={{
+                              margin: 0,
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: '#003459',
+                            }}
+                          >
+                            掌握进度
+                          </p>
+                          <MasteryDots
+                            progress={
+                              getErrorBookItemState({
+                                mode: errorBookMode,
+                                sectionId: errorBookSectionId,
+                                questionId: question.id,
+                              }).masteryProgress
+                            }
+                            size={9}
+                            gap={6}
+                          />
+                        </div>
+
+                        {(() => {
+                          const status = getErrorBookItemState({
+                            mode: errorBookMode,
+                            sectionId: errorBookSectionId,
+                            questionId: question.id,
+                          });
+                          const remain = Math.max(0, 3 - status.masteryProgress);
+                          const helperText = status.archived
+                            ? '已归档到已掌握'
+                            : status.canArchive
+                              ? '已满足归档条件'
+                              : `再答对 ${remain} 次即可归档`;
+                          return (
+                            <>
+                              <p style={{ margin: 0, fontSize: 13, color: '#5F6B78' }}>{helperText}</p>
+                              {status.canArchive && !status.archived && slideIndex === qIndex && (
+                                <button
+                                  type="button"
+                                  disabled={archivePending}
+                                  onClick={() => {
+                                    setArchiveTargetQuestionId(question.id);
+                                    setArchiveConfirmOpen(true);
+                                  }}
+                                  style={{
+                                    width: '100%',
+                                    height: 42,
+                                    borderRadius: 999,
+                                    border: 'none',
+                                    background: archivePending ? 'rgba(0,52,89,0.45)' : '#003459',
+                                    color: '#fff',
+                                    fontSize: 14,
+                                    fontWeight: 700,
+                                    cursor: archivePending ? 'wait' : 'pointer',
+                                  }}
+                                >
+                                  {archivePending ? '归档中...' : '归档到已掌握'}
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
+
                     {slideAnalysisVisible && (
                       <QuizInlineAnalysis
                         key={question.id}
@@ -569,6 +833,107 @@ export default function QuizPage({
           >
             已保存到刷题笔记
           </div>
+        )}
+
+        {errorBookToast && (
+          <div
+            style={{
+              position: 'absolute',
+              left: '50%',
+              top: noteSavedToast ? 56 : 12,
+              transform: 'translateX(-50%)',
+              zIndex: 55,
+              padding: '10px 16px',
+              borderRadius: 999,
+              background: 'rgba(0,52,89,0.92)',
+              color: '#fff',
+              fontSize: 13,
+              fontWeight: 600,
+              boxShadow: '0 8px 24px rgba(0,52,89,0.2)',
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {errorBookToast}
+          </div>
+        )}
+
+        {archiveConfirmOpen && (
+          <>
+            <div
+              onClick={() => {
+                if (!archivePending) {
+                  setArchiveConfirmOpen(false);
+                  setArchiveTargetQuestionId(null);
+                }
+              }}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'rgba(0,0,0,0.28)',
+                zIndex: 58,
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                left: 16,
+                right: 16,
+                bottom: 24,
+                borderRadius: 18,
+                background: '#fff',
+                zIndex: 59,
+                padding: 16,
+                boxShadow: '0 14px 34px rgba(0,0,0,0.16)',
+              }}
+            >
+              <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#1A1F24' }}>归档这道题？</p>
+              <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.45, color: '#667280' }}>
+                归档后将移动到“已掌握”，后续答错会自动复活。
+              </p>
+              <div style={{ marginTop: 14, display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  disabled={archivePending}
+                  onClick={() => {
+                    setArchiveConfirmOpen(false);
+                    setArchiveTargetQuestionId(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    height: 44,
+                    borderRadius: 999,
+                    border: '1px solid rgba(0,52,89,0.18)',
+                    background: '#fff',
+                    color: '#003459',
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: archivePending ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={archivePending}
+                  onClick={handleConfirmArchive}
+                  style={{
+                    flex: 1,
+                    height: 44,
+                    borderRadius: 999,
+                    border: 'none',
+                    background: archivePending ? 'rgba(0,52,89,0.45)' : '#003459',
+                    color: '#fff',
+                    fontSize: 14,
+                    fontWeight: 700,
+                    cursor: archivePending ? 'wait' : 'pointer',
+                  }}
+                >
+                  {archivePending ? '处理中...' : '确认归档'}
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </div>
 
