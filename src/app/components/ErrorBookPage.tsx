@@ -213,6 +213,51 @@ function CheckOutlineBox({ checked }: { checked: boolean }) {
   );
 }
 
+const LAST_VISITED_LABEL_COLOR = '#00A7E1';
+
+function SectionTitleRow({ name, isLastVisited }: { name: string; isLastVisited: boolean }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        minWidth: 0,
+        width: '100%',
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          fontSize: 14,
+          fontWeight: 500,
+          color: '#1A1F24',
+          flex: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {name}
+      </p>
+      {isLastVisited && (
+        <span
+          style={{
+            flexShrink: 0,
+            fontSize: 12,
+            fontWeight: 600,
+            color: LAST_VISITED_LABEL_COLOR,
+            lineHeight: 1.2,
+          }}
+        >
+          上次进行
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ErrorCountMeta({ total, showCheck }: { total: number; showCheck: boolean }) {
   return (
     <div
@@ -678,8 +723,6 @@ export default function ErrorBookPage() {
                     cursor: 'pointer',
                     transition: 'transform 0.16s ease',
                     borderRadius: 12,
-                    background: isFocused ? 'rgba(0,167,225,0.08)' : 'transparent',
-                    outline: isFocused ? '1.5px solid rgba(0,167,225,0.35)' : 'none',
                   }}
                   onPointerDown={(e) => pressIn(e.currentTarget)}
                   onPointerUp={(e) => pressOut(e.currentTarget)}
@@ -700,19 +743,7 @@ export default function ErrorBookPage() {
                     />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: 14,
-                        fontWeight: 500,
-                        color: '#1A1F24',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {section.name}
-                    </p>
+                    <SectionTitleRow name={section.name} isLastVisited={isFocused} />
                     <MasteryHintBlock summary={sectionSummary} listFilter={bucketFilter} />
                   </div>
                   <ErrorCountMeta total={sectionSummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
@@ -828,8 +859,6 @@ export default function ErrorBookPage() {
                     cursor: 'pointer',
                     transition: 'transform 0.16s ease',
                     borderRadius: 12,
-                    background: isFocused ? 'rgba(0,167,225,0.08)' : 'transparent',
-                    outline: isFocused ? '1.5px solid rgba(0,167,225,0.35)' : 'none',
                   }}
                   onPointerDown={(e) => pressIn(e.currentTarget)}
                   onPointerUp={(e) => pressOut(e.currentTarget)}
@@ -850,19 +879,7 @@ export default function ErrorBookPage() {
                     />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: 14,
-                        fontWeight: 500,
-                        color: '#1A1F24',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {section.name}
-                    </p>
+                    <SectionTitleRow name={section.name} isLastVisited={isFocused} />
                     <MasteryHintBlock summary={sectionSummary} listFilter={bucketFilter} />
                   </div>
                   <ErrorCountMeta total={sectionSummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
