@@ -35,23 +35,31 @@ const MASTERY_CARD_BORDER = '1px solid rgba(0,52,89,0.08)';
 const MASTERY_TITLE_COLOR = '#003459';
 const MASTERY_FOOTER_BAR_H = 44;
 
-/** 提示条文案：在「掌握进度下沿」与「提示条下沿」之间的可见带内垂直居中 */
+/** 提示条文案：在掌握进度下沿与提示条下沿之间的可见带（44 - 14 = 30px）内垂直居中 */
 function MasteryFooterBarContent({ children }: { children: ReactNode }) {
+  const visibleBandH = MASTERY_FOOTER_BAR_H - MASTERY_CARD_RADIUS;
   return (
     <div
       style={{
         width: '100%',
-        height: '100%',
+        height: MASTERY_FOOTER_BAR_H,
         boxSizing: 'border-box',
         paddingTop: MASTERY_CARD_RADIUS,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
         paddingLeft: 14,
         paddingRight: 14,
       }}
     >
-      {children}
+      <div
+        style={{
+          height: visibleBandH,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '100%',
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -218,6 +226,24 @@ const MASTERY_HINT_FOOTER_TEXT_STYLE: CSSProperties = {
   letterSpacing: '0.01em',
   textAlign: 'center',
 };
+
+/** 已归档：浅灰底栏（不可点），替代原绿色可归档条 */
+function ArchivedFooterBar() {
+  return (
+    <div
+      role="status"
+      aria-label="已归档"
+      style={masteryFooterBarShellStyle(
+        false,
+        'linear-gradient(180deg, rgba(245,248,250,0.98) 0%, rgba(229,235,242,0.98) 100%)',
+      )}
+    >
+      <MasteryFooterBarContent>
+        <p style={{ ...MASTERY_HINT_FOOTER_TEXT_STYLE, color: '#6B7580' }}>已归档</p>
+      </MasteryFooterBarContent>
+    </div>
+  );
+}
 
 /** 反复错：与可归档绿条互斥，仅展示其一 */
 function RepeatedWrongFooterBar() {
@@ -428,6 +454,8 @@ export default function QuizPage({
   const [archiveTargetQuestionId, setArchiveTargetQuestionId] = useState<number | null>(null);
   const [archiveToastOpen, setArchiveToastOpen] = useState(false);
   const [archiveToastNextIndex, setArchiveToastNextIndex] = useState<number | null>(null);
+  /** 归档写入 localStorage 后 bump，刷新掌握进度区底栏状态 */
+  const [archiveUiRevision, setArchiveUiRevision] = useState(0);
   const footerRef = useRef<HTMLDivElement | null>(null);
   const mainAreaRef = useRef<HTMLDivElement | null>(null);
   const pageRootRef = useRef<HTMLDivElement | null>(null);
@@ -756,6 +784,7 @@ export default function QuizPage({
     setArchivePending(true);
     try {
       archiveErrorBookItem({ questionId: archiveTargetQuestionId });
+      setArchiveUiRevision((n) => n + 1);
       setArchiveConfirmOpen(false);
       setArchiveTargetQuestionId(null);
       // 归档成功：在“本题”居中轻提示，关闭后再跳下一题，避免串到下一题题干下
@@ -1167,14 +1196,21 @@ export default function QuizPage({
                       /** 反复错必属复活题；复活题未必已达反复错阈值 */
                       const showRevivedBadge =
                         !status.archived && (status.revived || status.repeatedWrong);
+                      const showArchivedFooterBar = status.archived;
                       const showArchiveFooterBar =
-                        status.canArchive && !status.archived && slideIndex === qIndex;
+                        !status.archived &&
+                        status.canArchive &&
+                        slideIndex === qIndex;
                       const showRepeatedWrongFooterBar =
-                        !showArchiveFooterBar && status.repeatedWrong;
-                      const hasFooterBelowCard = showArchiveFooterBar || showRepeatedWrongFooterBar;
+                        !status.archived && !showArchiveFooterBar && status.repeatedWrong;
+                      const hasFooterBelowCard =
+                        showArchivedFooterBar ||
+                        showArchiveFooterBar ||
+                        showRepeatedWrongFooterBar;
 
                       return (
                         <div
+                          key={`mastery-${question.id}-${archiveUiRevision}`}
                           style={{
                             marginTop: 14,
                             display: 'flex',
@@ -1189,13 +1225,12 @@ export default function QuizPage({
                               gap: 10,
                               background: MASTERY_CARD_BG,
                               border: MASTERY_CARD_BORDER,
-                              borderRadius: MASTERY_CARD_RADIUS,
+                              borderRadius: hasFooterBelowCard
+                                ? `${MASTERY_CARD_RADIUS}px ${MASTERY_CARD_RADIUS}px 0 0`
+                                : MASTERY_CARD_RADIUS,
                               position: 'relative',
                               zIndex: 2,
-                              overflow: 'visible',
-                              boxShadow: hasFooterBelowCard
-                                ? `0 ${MASTERY_CARD_RADIUS}px 0 ${MASTERY_CARD_BG}`
-                                : undefined,
+                              overflow: 'hidden',
                             }}
                           >
                             <div
@@ -1234,6 +1269,7 @@ export default function QuizPage({
                             </div>
                             <p style={{ margin: 0, fontSize: 13, color: '#5F6B78' }}>{helperText}</p>
                           </div>
+                          {showArchivedFooterBar && <ArchivedFooterBar />}
                           {showArchiveFooterBar && (
                             <ArchiveToMasteredFooterBar
                               pending={archivePending}

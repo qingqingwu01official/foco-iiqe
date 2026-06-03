@@ -247,11 +247,9 @@ function MasteryHintBlock({
       style={{
         fontSize: 10,
         color: gray,
-        lineHeight: 1.25,
+        lineHeight: 1.2,
+        flexShrink: 1,
         minWidth: 0,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
       }}
     >
       <span style={{ fontWeight: 700, color: gray }}>{count}题</span>
@@ -278,13 +276,15 @@ function MasteryHintBlock({
         <div
           style={{
             marginTop: 7,
-            display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-            columnGap: 8,
-            rowGap: 4,
+            display: 'flex',
+            flexWrap: 'nowrap',
+            gap: 6,
+            justifyContent: 'space-between',
+            alignItems: 'center',
             width: '100%',
             maxWidth: '100%',
             minWidth: 0,
+            overflow: 'hidden',
           }}
         >
           {renderCountPhrase(needThreeMore, '需做对3次')}
