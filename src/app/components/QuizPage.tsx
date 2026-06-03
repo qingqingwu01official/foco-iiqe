@@ -26,6 +26,60 @@ import {
 const DEFAULT_BOTTOM_BAR_H = 100;
 const QUIZ_PROGRESS_STORAGE_KEY = 'iiqe-quiz-progress-v1';
 
+/** 已作答或已出解析的最远题号（含当前停留题），用于答题记录续练 */
+function furthestQuizProgressIndex(
+  currentIndex: number,
+  answerMap: Record<number, number>,
+  revealedMap: Record<number, boolean>,
+): number {
+  let max = currentIndex;
+  for (const key of Object.keys(answerMap)) {
+    const i = Number(key);
+    if (Number.isFinite(i)) max = Math.max(max, i);
+  }
+  for (const key of Object.keys(revealedMap)) {
+    const i = Number(key);
+    if (revealedMap[i]) max = Math.max(max, i);
+  }
+  return max;
+}
+
+type StoredQuizProgressEntry =
+  | number
+  | {
+      index: number;
+      /** 本会话是否已作答过（含停在第 1 题仅作答未点下一题） */
+      touched?: boolean;
+    };
+
+function normalizeStoredQuizProgress(value: unknown): { index: number; touched: boolean } {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const index = Math.max(0, Math.floor(value));
+    return { index, touched: index > 0 };
+  }
+  if (value && typeof value === 'object' && 'index' in value) {
+    const raw = value as { index: unknown; touched?: boolean };
+    const index =
+      typeof raw.index === 'number' && Number.isFinite(raw.index)
+        ? Math.max(0, Math.floor(raw.index))
+        : 0;
+    return { index, touched: Boolean(raw.touched) || index > 0 };
+  }
+  return { index: 0, touched: false };
+}
+
+function readQuizProgressFromStorage(progressKey: string): { index: number; touched: boolean } {
+  if (typeof window === 'undefined') return { index: 0, touched: false };
+  try {
+    const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
+    if (!raw) return { index: 0, touched: false };
+    const parsed = JSON.parse(raw) as Record<string, StoredQuizProgressEntry>;
+    return normalizeStoredQuizProgress(parsed?.[progressKey]);
+  } catch {
+    return { index: 0, touched: false };
+  }
+}
+
 export type { QuizQuestion };
 export { QUESTIONS };
 
@@ -468,46 +522,31 @@ export default function QuizPage({
     startIndex,
   });
 
-  const initialStoredProgress = useMemo(() => {
-    if (typeof window === 'undefined') return 0;
-    try {
-      const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
-      if (!raw) return 0;
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      const value = parsed?.[resumeProgressKey];
-      return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-    } catch {
-      return 0;
-    }
-  }, [resumeProgressKey]);
-
   const resumePromptCheckedRef = useRef(false);
-  const skipResumePrompt =
-    startIndex !== 0 ||
-    initialStoredProgress <= 0 ||
-    initialStoredProgress >= questions.length;
-  const [canPersistProgress, setCanPersistProgress] = useState(skipResumePrompt);
 
-  const readStoredProgressIndex = useCallback((): number => {
-    if (typeof window === 'undefined') return 0;
-    try {
-      const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
-      if (!raw) return 0;
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      const value = parsed?.[resumeProgressKey];
-      return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-    } catch {
-      return 0;
-    }
-  }, [resumeProgressKey]);
+  const readStoredProgress = useCallback(
+    () => readQuizProgressFromStorage(resumeProgressKey),
+    [resumeProgressKey],
+  );
+
+  const shouldSkipResumePrompt = useCallback(
+    (stored: { index: number; touched: boolean }) =>
+      !stored.touched || stored.index >= questions.length,
+    [questions.length],
+  );
+
+  const [canPersistProgress, setCanPersistProgress] = useState(() => {
+    const stored = readQuizProgressFromStorage(resumeProgressKey);
+    return shouldSkipResumePrompt(stored);
+  });
 
   const writeStoredProgressIndex = useCallback(
-    (index: number) => {
+    (index: number, touched: boolean) => {
       if (typeof window === 'undefined') return;
       try {
         const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
-        const parsed = (raw ? (JSON.parse(raw) as Record<string, number>) : {}) ?? {};
-        parsed[resumeProgressKey] = index;
+        const parsed = (raw ? (JSON.parse(raw) as Record<string, StoredQuizProgressEntry>) : {}) ?? {};
+        parsed[resumeProgressKey] = { index, touched: touched || index > 0 };
         window.localStorage.setItem(QUIZ_PROGRESS_STORAGE_KEY, JSON.stringify(parsed));
       } catch {
         // ignore localStorage errors in prototype mode
@@ -521,7 +560,7 @@ export default function QuizPage({
     try {
       const raw = window.localStorage.getItem(QUIZ_PROGRESS_STORAGE_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as Record<string, number>;
+      const parsed = JSON.parse(raw) as Record<string, StoredQuizProgressEntry>;
       if (!parsed || typeof parsed !== 'object') return;
       delete parsed[resumeProgressKey];
       window.localStorage.setItem(QUIZ_PROGRESS_STORAGE_KEY, JSON.stringify(parsed));
@@ -561,31 +600,39 @@ export default function QuizPage({
     if (resumePromptCheckedRef.current) return;
     resumePromptCheckedRef.current = true;
 
-    if (startIndex !== 0) {
-      setCanPersistProgress(true);
-      return;
-    }
-    if (returnPath && returnPath !== '/errors' && fromErrors) {
-      setCanPersistProgress(true);
-      return;
-    }
-
-    const stored = initialStoredProgress;
-    if (stored <= 0 || stored >= questions.length) {
+    const stored = readStoredProgress();
+    if (shouldSkipResumePrompt(stored)) {
       setCanPersistProgress(true);
       return;
     }
 
-    setResumeDetectedIndex(stored);
+    setResumeDetectedIndex(stored.index);
     setResumePromptOpen(true);
-  }, [emblaApi, fromErrors, initialStoredProgress, questions.length, returnPath, startIndex]);
+  }, [emblaApi, readStoredProgress, shouldSkipResumePrompt]);
 
-  // 用户处理完答题记录（或无需弹窗）后，才写入本次练习进度
+  // 用户处理完答题记录（或无需弹窗）后，才写入本次练习进度（含已作答但未点「下一题」的题号）
   useEffect(() => {
     if (!emblaApi || !canPersistProgress) return;
     if (resumePromptOpen) return;
-    writeStoredProgressIndex(qIndex);
-  }, [canPersistProgress, emblaApi, qIndex, resumePromptOpen, writeStoredProgressIndex]);
+    const furthest = furthestQuizProgressIndex(qIndex, answers, revealedAnalysis);
+    const touched = Object.keys(answers).length > 0 || Object.keys(revealedAnalysis).length > 0;
+    writeStoredProgressIndex(furthest, touched);
+  }, [
+    answers,
+    canPersistProgress,
+    emblaApi,
+    qIndex,
+    revealedAnalysis,
+    resumePromptOpen,
+    writeStoredProgressIndex,
+  ]);
+
+  const persistProgressBeforeLeave = useCallback(() => {
+    const furthest = furthestQuizProgressIndex(qIndex, answers, revealedAnalysis);
+    const touched = Object.keys(answers).length > 0 || Object.keys(revealedAnalysis).length > 0;
+    if (!canPersistProgress && !touched) return;
+    writeStoredProgressIndex(furthest, touched);
+  }, [answers, canPersistProgress, qIndex, revealedAnalysis, writeStoredProgressIndex]);
 
   const displayTotalFromState = (location.state as { displayTotalQ?: number } | undefined)?.displayTotalQ;
   const totalForDisplay =
@@ -925,6 +972,7 @@ export default function QuizPage({
               type="button"
               onClick={() => {
                 setExitConfirmOpen(false);
+                persistProgressBeforeLeave();
                 navigate(returnPath, { state: (location.state as any)?.returnState ?? undefined });
               }}
               style={{
