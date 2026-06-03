@@ -1,5 +1,5 @@
 import { useNavigate, useLocation, useParams } from 'react-router';
-import { FocoOwlLogo } from './FocoAssets';
+import { FocoProfileAvatar } from './FocoAssets';
 import type { ErrorReviewQuizTarget } from '../utils/errorBookFocus';
 
 type PracticeStats = {
@@ -137,14 +137,16 @@ export default function QuizPracticeCompletePage() {
             width: 140,
             height: 140,
             borderRadius: 70,
+            overflow: 'hidden',
             background: 'linear-gradient(180deg, rgba(0,167,225,0.08) 0%, rgba(0,52,89,0.04) 100%)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             marginBottom: 20,
+            flexShrink: 0,
           }}
         >
-          <FocoOwlLogo size={96} />
+          <FocoProfileAvatar size={120} />
         </div>
 
         <h1

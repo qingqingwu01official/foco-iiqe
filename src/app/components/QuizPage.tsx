@@ -18,7 +18,6 @@ import {
   archiveErrorBookItem,
   filterQuizQuestionsForErrorBookList,
   getErrorBookItemState,
-  isQuestionTracked,
   recordErrorBookAnswer,
   type ErrorBookListFilter,
   type ErrorBookMode,
@@ -214,59 +213,45 @@ function ArchiveToMasteredFooterBar({
   );
 }
 
-/** 复活题：已掌握后再次答错（橙色，与反复错红条同构） */
-function RevivedFooterBar({ connectBelow = false }: { connectBelow?: boolean }) {
-  return (
-    <div
-      role="note"
-      style={masteryFooterBarShellStyle(
-        connectBelow,
-        'linear-gradient(180deg, rgba(255,243,232,0.98) 0%, rgba(255,224,196,0.98) 100%)',
-      )}
-    >
-      <MasteryFooterBarContent>
-        <p
-          style={{
-            margin: 0,
-            fontSize: 12,
-            lineHeight: 1.2,
-            fontWeight: 600,
-            color: '#C2410C',
-            letterSpacing: '0.01em',
-            textAlign: 'center',
-          }}
-        >
-          复活题，加强巩固可掌握
-        </p>
-      </MasteryFooterBarContent>
-    </div>
-  );
-}
+const MASTERY_HINT_FOOTER_TEXT_STYLE: CSSProperties = {
+  margin: 0,
+  fontSize: 12,
+  lineHeight: 1.2,
+  fontWeight: 600,
+  letterSpacing: '0.01em',
+  textAlign: 'center',
+};
 
-/** 反复错：累计答错超过 5 次 */
-function RepeatedWrongFooterBar({ connectBelow = false }: { connectBelow?: boolean }) {
+/** 掌握进度下提示条（复活 / 反复错）：结构一致，仅底色、字色、文案不同 */
+function MasteryHintFooterBar({
+  variant,
+  connectBelow = false,
+}: {
+  variant: 'revived' | 'repeatedWrong';
+  connectBelow?: boolean;
+}) {
+  const config =
+    variant === 'revived'
+      ? {
+          background:
+            'linear-gradient(180deg, rgba(255,236,224,0.98) 0%, rgba(255,218,190,0.98) 100%)',
+          color: '#C2410C',
+          label: '复活题，加强巩固可掌握',
+        }
+      : {
+          background:
+            'linear-gradient(180deg, rgba(255,235,232,0.98) 0%, rgba(255,220,214,0.98) 100%)',
+          color: '#B82E18',
+          label: '反复错，建议深入看解析/找老师答疑',
+        };
+
   return (
     <div
       role="note"
-      style={masteryFooterBarShellStyle(
-        connectBelow,
-        'linear-gradient(180deg, rgba(255,235,232,0.98) 0%, rgba(255,220,214,0.98) 100%)',
-      )}
+      style={masteryFooterBarShellStyle(connectBelow, config.background)}
     >
       <MasteryFooterBarContent>
-        <p
-          style={{
-            margin: 0,
-            fontSize: 12,
-            lineHeight: 1.2,
-            fontWeight: 600,
-            color: '#B82E18',
-            letterSpacing: '0.01em',
-            textAlign: 'center',
-          }}
-        >
-          反复错，建议深入看解析/找老师答疑
-        </p>
+        <p style={{ ...MASTERY_HINT_FOOTER_TEXT_STYLE, color: config.color }}>{config.label}</p>
       </MasteryFooterBarContent>
     </div>
   );
@@ -601,12 +586,8 @@ export default function QuizPage({
   const isReferenceLayout = optionLayout !== 'default';
   const enableQuizNote = enableQuizNoteProp ?? true;
   const currentQuestionId = questions[qIndex]?.id;
-  const showMasteryPanel =
-    currentQuestionId !== undefined &&
-    (errorBookEnabled || isQuestionTracked(currentQuestionId));
-  const currentErrorBookState = showMasteryPanel
-    ? getErrorBookItemState({ questionId: currentQuestionId })
-    : null;
+  /** 掌握进度区及绿/橙/红底栏：仅错题本刷题页（fromErrors + sectionId） */
+  const showMasteryPanel = errorBookEnabled && currentQuestionId !== undefined;
   const quizReturnPath = id
     ? `/quiz/${mode}/${id}`
     : location.pathname.startsWith('/demo/')
@@ -1240,9 +1221,9 @@ export default function QuizPage({
                             />
                           )}
                           {hasRevivedBar && (
-                            <RevivedFooterBar connectBelow={hasRepeatedWrongBar} />
+                            <MasteryHintFooterBar variant="revived" connectBelow={hasRepeatedWrongBar} />
                           )}
-                          {hasRepeatedWrongBar && <RepeatedWrongFooterBar />}
+                          {hasRepeatedWrongBar && <MasteryHintFooterBar variant="repeatedWrong" />}
                         </div>
                       );
                     })()}

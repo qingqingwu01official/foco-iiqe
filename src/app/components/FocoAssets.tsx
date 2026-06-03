@@ -47,8 +47,9 @@ export function FocoProfileAvatar({ size = 64 }: { size?: number }) {
       src={focoProfileAvatarSrc}
       width={size}
       height={size}
-      alt="FOCO"
-      style={{ display: 'block' }}
+      alt=""
+      role="presentation"
+      style={{ display: 'block', borderRadius: '50%', objectFit: 'cover' }}
     />
   );
 }
