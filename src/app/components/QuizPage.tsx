@@ -1241,9 +1241,8 @@ export default function QuizPage({
                           ? '你已连续答对三次，可归档至已掌握'
                           : `再答对 ${remain} 次即可归档至已掌握`;
 
-                      /** 反复错必属复活题；复活题未必已达反复错阈值 */
-                      const showRevivedBadge =
-                        !status.archived && (status.revived || status.repeatedWrong);
+                      /** 复活题角标仅 revived；反复错单独用红底栏，不叠加身份 */
+                      const showRevivedBadge = !status.archived && status.revived;
                       const showArchivedFooterBar = status.archived;
                       const showArchiveFooterBar =
                         !status.archived &&

@@ -13,7 +13,7 @@ type PersistedItemState = {
   archived: boolean;
   /** 累计答错次数（跨章节/分重点/错题本统一累计） */
   wrongCount: number;
-  /** 已掌握后再次答错 →「复活题」（反复错题必带此标记） */
+  /** 已掌握后再次答错 →「复活题」（与反复错独立，不因 wrongCount>5 自动置 true） */
   revived?: boolean;
 };
 
@@ -85,9 +85,7 @@ function migrateLegacyStore(legacy: PersistedStore): PersistedStore {
       masteryProgress: raw.masteryProgress,
       archived: raw.archived,
       wrongCount: (raw as { wrongCount?: number }).wrongCount ?? 0,
-      revived: (raw as { repeatedWrong?: boolean }).repeatedWrong
-        ? true
-        : (raw as { revived?: boolean }).revived,
+      revived: Boolean((raw as { revived?: boolean }).revived),
     });
     if (isRepeatedWrong(item.wrongCount) || (raw as { repeatedWrong?: boolean }).repeatedWrong) {
       item.wrongCount = Math.max(item.wrongCount, REPEATED_WRONG_THRESHOLD + 1);
@@ -191,12 +189,11 @@ export function recordErrorBookAnswer(params: {
     }
   } else {
     const wrongCount = (store[itemKey] ? current.wrongCount : 0) + 1;
-    const repeatedWrong = isRepeatedWrong(wrongCount);
     next = {
       masteryProgress: 0,
       archived: false,
       wrongCount,
-      revived: revivedFromMastered || repeatedWrong ? true : Boolean(current.revived),
+      revived: revivedFromMastered ? true : Boolean(current.revived),
     };
   }
 
