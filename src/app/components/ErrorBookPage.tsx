@@ -247,9 +247,11 @@ function MasteryHintBlock({
       style={{
         fontSize: 10,
         color: gray,
-        lineHeight: 1.2,
-        flexShrink: 1,
+        lineHeight: 1.25,
         minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
       }}
     >
       <span style={{ fontWeight: 700, color: gray }}>{count}题</span>
@@ -276,15 +278,13 @@ function MasteryHintBlock({
         <div
           style={{
             marginTop: 7,
-            display: 'flex',
-            flexWrap: 'nowrap',
-            gap: 6,
-            justifyContent: 'space-between',
-            alignItems: 'center',
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            columnGap: 8,
+            rowGap: 4,
             width: '100%',
             maxWidth: '100%',
             minWidth: 0,
-            overflow: 'hidden',
           }}
         >
           {renderCountPhrase(needThreeMore, '需做对3次')}
@@ -633,7 +633,19 @@ export default function ErrorBookPage() {
                 </div>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 15, fontWeight: 500, color: '#1A1F24' }}>{chapter.name}</p>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 15,
+                    fontWeight: 500,
+                    color: '#1A1F24',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {chapter.name}
+                </p>
                 <MasteryHintBlock summary={chapterSummary} listFilter={bucketFilter} />
               </div>
               <ErrorCountMeta total={chapterSummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
@@ -688,7 +700,19 @@ export default function ErrorBookPage() {
                     />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: '#1A1F24' }}>{section.name}</p>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: 14,
+                        fontWeight: 500,
+                        color: '#1A1F24',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {section.name}
+                    </p>
                     <MasteryHintBlock summary={sectionSummary} listFilter={bucketFilter} />
                   </div>
                   <ErrorCountMeta total={sectionSummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
@@ -759,7 +783,19 @@ export default function ErrorBookPage() {
                 </div>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 15, fontWeight: 500, color: '#1A1F24' }}>{library.name}</p>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 15,
+                    fontWeight: 500,
+                    color: '#1A1F24',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {library.name}
+                </p>
                 <MasteryHintBlock summary={librarySummary} listFilter={bucketFilter} />
               </div>
               <ErrorCountMeta total={librarySummary.totalInFilter} showCheck={bucketFilter === 'pending'} />
@@ -814,7 +850,19 @@ export default function ErrorBookPage() {
                     />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: '#1A1F24' }}>{section.name}</p>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: 14,
+                        fontWeight: 500,
+                        color: '#1A1F24',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {section.name}
+                    </p>
                     <MasteryHintBlock summary={sectionSummary} listFilter={bucketFilter} />
                   </div>
                   <ErrorCountMeta total={sectionSummary.totalInFilter} showCheck={bucketFilter === 'pending'} />

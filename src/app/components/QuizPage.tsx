@@ -173,12 +173,9 @@ function CenterStatusToast({ message }: { message: string }) {
 function ArchiveToMasteredFooterBar({
   pending,
   onClick,
-  connectBelow = false,
 }: {
   pending: boolean;
   onClick: () => void;
-  /** 下方还有反复错条时去掉本条底圆角 */
-  connectBelow?: boolean;
 }) {
   return (
     <button
@@ -188,7 +185,7 @@ function ArchiveToMasteredFooterBar({
       aria-label={pending ? '归档中' : '点击可归档至已掌握'}
       style={{
         ...masteryFooterBarShellStyle(
-          connectBelow,
+          false,
           'linear-gradient(180deg, rgba(232,255,240,0.98) 0%, rgba(214,245,228,0.98) 100%)',
         ),
         cursor: pending ? 'wait' : 'pointer',
@@ -222,38 +219,42 @@ const MASTERY_HINT_FOOTER_TEXT_STYLE: CSSProperties = {
   textAlign: 'center',
 };
 
-/** 掌握进度下提示条（复活 / 反复错）：结构一致，仅底色、字色、文案不同 */
-function MasteryHintFooterBar({
-  variant,
-  connectBelow = false,
-}: {
-  variant: 'revived' | 'repeatedWrong';
-  connectBelow?: boolean;
-}) {
-  const config =
-    variant === 'revived'
-      ? {
-          background:
-            'linear-gradient(180deg, rgba(255,236,224,0.98) 0%, rgba(255,218,190,0.98) 100%)',
-          color: '#C2410C',
-          label: '复活题，加强巩固可掌握',
-        }
-      : {
-          background:
-            'linear-gradient(180deg, rgba(255,235,232,0.98) 0%, rgba(255,220,214,0.98) 100%)',
-          color: '#B82E18',
-          label: '反复错，建议深入看解析/找老师答疑',
-        };
-
+/** 反复错：与可归档绿条互斥，仅展示其一 */
+function RepeatedWrongFooterBar() {
   return (
     <div
       role="note"
-      style={masteryFooterBarShellStyle(connectBelow, config.background)}
+      style={masteryFooterBarShellStyle(
+        false,
+        'linear-gradient(180deg, rgba(255,235,232,0.98) 0%, rgba(255,220,214,0.98) 100%)',
+      )}
     >
       <MasteryFooterBarContent>
-        <p style={{ ...MASTERY_HINT_FOOTER_TEXT_STYLE, color: config.color }}>{config.label}</p>
+        <p style={{ ...MASTERY_HINT_FOOTER_TEXT_STYLE, color: '#B82E18' }}>
+          反复错，建议深入看解析/找老师答疑
+        </p>
       </MasteryFooterBarContent>
     </div>
+  );
+}
+
+function RevivedQuestionBadge() {
+  return (
+    <span
+      style={{
+        flexShrink: 0,
+        fontSize: 11,
+        lineHeight: 1.2,
+        fontWeight: 600,
+        color: '#C2410C',
+        letterSpacing: '0.01em',
+        padding: '2px 8px',
+        borderRadius: 999,
+        background: 'rgba(255,138,76,0.14)',
+      }}
+    >
+      复活题
+    </span>
   );
 }
 
@@ -1163,12 +1164,14 @@ export default function QuizPage({
                           ? '你已连续答对三次，可归档至已掌握'
                           : `再答对 ${remain} 次即可归档至已掌握`;
 
-                      const hasRevivedBar = status.revived && !status.archived;
-                      const hasRepeatedWrongBar = status.repeatedWrong;
+                      /** 反复错必属复活题；复活题未必已达反复错阈值 */
+                      const showRevivedBadge =
+                        !status.archived && (status.revived || status.repeatedWrong);
                       const showArchiveFooterBar =
                         status.canArchive && !status.archived && slideIndex === qIndex;
-                      const hasFooterBelowCard =
-                        showArchiveFooterBar || hasRevivedBar || hasRepeatedWrongBar;
+                      const showRepeatedWrongFooterBar =
+                        !showArchiveFooterBar && status.repeatedWrong;
+                      const hasFooterBelowCard = showArchiveFooterBar || showRepeatedWrongFooterBar;
 
                       return (
                         <div
@@ -1195,35 +1198,52 @@ export default function QuizPage({
                                 : undefined,
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 8,
+                                minWidth: 0,
+                              }}
+                            >
                               <p
                                 style={{
                                   margin: 0,
                                   fontSize: 13,
                                   fontWeight: 600,
                                   color: MASTERY_TITLE_COLOR,
+                                  flexShrink: 0,
                                 }}
                               >
                                 掌握进度
                               </p>
-                              <MasteryDots progress={status.masteryProgress} size={9} gap={6} />
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'flex-end',
+                                  gap: 8,
+                                  minWidth: 0,
+                                  flex: 1,
+                                }}
+                              >
+                                {showRevivedBadge && <RevivedQuestionBadge />}
+                                <MasteryDots progress={status.masteryProgress} size={9} gap={6} />
+                              </div>
                             </div>
                             <p style={{ margin: 0, fontSize: 13, color: '#5F6B78' }}>{helperText}</p>
                           </div>
                           {showArchiveFooterBar && (
                             <ArchiveToMasteredFooterBar
                               pending={archivePending}
-                              connectBelow={hasRevivedBar || hasRepeatedWrongBar}
                               onClick={() => {
                                 setArchiveTargetQuestionId(question.id);
                                 setArchiveConfirmOpen(true);
                               }}
                             />
                           )}
-                          {hasRevivedBar && (
-                            <MasteryHintFooterBar variant="revived" connectBelow={hasRepeatedWrongBar} />
-                          )}
-                          {hasRepeatedWrongBar && <MasteryHintFooterBar variant="repeatedWrong" />}
+                          {showRepeatedWrongFooterBar && <RepeatedWrongFooterBar />}
                         </div>
                       );
                     })()}

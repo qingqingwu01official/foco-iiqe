@@ -13,7 +13,7 @@ type PersistedItemState = {
   archived: boolean;
   /** 累计答错次数（跨章节/分重点/错题本统一累计） */
   wrongCount: number;
-  /** 已掌握后再次答错 →「复活题」 */
+  /** 已掌握后再次答错 →「复活题」（反复错题必带此标记） */
   revived?: boolean;
 };
 
@@ -24,7 +24,7 @@ export type ErrorBookItemState = PersistedItemState & {
   bucket: ErrorBookBucket;
   /** wrongCount > REPEATED_WRONG_THRESHOLD */
   repeatedWrong: boolean;
-  /** 已掌握后答错复活（展示橙色条） */
+  /** 已掌握后答错复活（刷题页标题行右侧「复活题」角标） */
   revived: boolean;
 };
 
@@ -191,11 +191,12 @@ export function recordErrorBookAnswer(params: {
     }
   } else {
     const wrongCount = (store[itemKey] ? current.wrongCount : 0) + 1;
+    const repeatedWrong = isRepeatedWrong(wrongCount);
     next = {
       masteryProgress: 0,
       archived: false,
       wrongCount,
-      revived: revivedFromMastered ? true : Boolean(current.revived),
+      revived: revivedFromMastered || repeatedWrong ? true : Boolean(current.revived),
     };
   }
 
@@ -387,7 +388,7 @@ export function ensureErrorBookListDemoSeed() {
   ensureRevivalDemoQuestion();
 }
 
-/** 演示复活题：题目 id=2，橙色复活条（非反复错） */
+/** 演示复活题：题目 id=2，标题行「复活题」角标（未达反复错阈值） */
 export function ensureRevivalDemoQuestion() {
   if (typeof window === 'undefined') return;
   const store = readStore();
